@@ -66,6 +66,12 @@ pub fn run(project_override: Option<&Path>) -> Result<()> {
     println!("memory    {memories} item(s)");
     println!("events    {events} recorded");
     println!("symbols   {symbols} indexed");
+
+    // Capture policy + redaction audit (PRD §8.12, §18).
+    let raw = if cfg.capture.raw_transcripts { "raw transcripts ON" } else { "summaries only" };
+    println!("capture   {raw} (retention {}d)", cfg.capture.retention_days);
+    let redactions: i64 = count(&conn, "redaction_audit")?;
+    println!("redacted  {redactions} secret(s) caught before storage");
     Ok(())
 }
 

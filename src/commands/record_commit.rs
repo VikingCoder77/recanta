@@ -12,7 +12,7 @@ use clap::Args;
 use rusqlite::Connection;
 
 use crate::project::Paths;
-use crate::{db, git, hash, repo};
+use crate::{db, git, hash, redact, repo};
 
 #[derive(Debug, Args)]
 pub struct RecordCommitArgs {
@@ -33,6 +33,9 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     let files = git::changed_files(&paths.root, &sha);
     let branch = git::current_branch(&paths.root);
 
+    // Redact the commit message before it is stored anywhere (PRD §8.12a).
+    let subject = redact::redact(&meta.subject);
+
     let conn = db::open_existing(&paths.db)?;
     let project_id = repo::current_project_id(&conn)?;
     let repo_id = repo::ensure_repository(&conn, &project_id, &paths.root, branch.as_deref())?;
@@ -41,7 +44,7 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     // duplicate hook fire collides on the UNIQUE key and inserts nothing (PRD §12.2).
     let idempotency_key = format!("record-commit:{sha}");
     let payload = serde_json::json!({
-        "subject": meta.subject,
+        "subject": subject.text,
         "changed_files": files,
         "file_count": files.len(),
     })
@@ -60,6 +63,20 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     }
     let event_id = conn.last_insert_rowid();
 
+    // Record what was redacted, for the audit trail (PRD §8.12a).
+    for hit in &subject.hits {
+        conn.execute(
+            "INSERT INTO redaction_audit (event_id, pattern_id, path, span)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                event_id,
+                hit.pattern_id,
+                "commit-message",
+                format!("{}-{}", hit.start, hit.end)
+            ],
+        )?;
+    }
+
     let author_hash = hash::short_token(&meta.author_email);
     let parents = serde_json::to_string(&meta.parents)?;
     conn.execute(
@@ -77,7 +94,7 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
             repo_id,
             branch,
             author_hash,
-            meta.subject,
+            subject.text,
             meta.timestamp,
             parents
         ],
@@ -89,13 +106,18 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     let changed_symbols = link_changed_symbols(&conn, repo_id, &sha, event_id, &files)?;
 
     println!(
-        "recorded commit {} \"{}\" ({} file{}, {} symbol{})",
+        "recorded commit {} \"{}\" ({} file{}, {} symbol{}){}",
         short(&sha),
-        truncate(&meta.subject, 60),
+        truncate(&subject.text, 60),
         files.len(),
         if files.len() == 1 { "" } else { "s" },
         changed_symbols,
-        if changed_symbols == 1 { "" } else { "s" }
+        if changed_symbols == 1 { "" } else { "s" },
+        if subject.hits.is_empty() {
+            String::new()
+        } else {
+            format!(" — redacted {} secret(s)", subject.hits.len())
+        }
     );
     Ok(())
 }

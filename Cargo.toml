@@ -39,6 +39,7 @@ tree-sitter = "0.25"
 tree-sitter-python = "0.23"
 tree-sitter-javascript = "0.23"
 tree-sitter-typescript = "0.23"
+regex = "1.12.3"
 
 [profile.release]
 # Small, fast-starting binary — startup latency matters because hooks fire

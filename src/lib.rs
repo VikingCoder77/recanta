@@ -20,6 +20,7 @@ pub mod install;
 pub mod memory;
 pub mod output;
 pub mod project;
+pub mod redact;
 pub mod repo;
 
 pub use cli::Cli;

@@ -102,6 +102,32 @@ pub struct Config {
     pub created_at: String,
     /// Default ignore rules applied before parsing/redaction (PRD §8.12).
     pub ignore: Vec<String>,
+    /// Capture/governance policy (PRD §8.12b). Added after v1; defaults apply when
+    /// loading older `project.json` files.
+    #[serde(default)]
+    pub capture: CapturePolicy,
+}
+
+/// Governs non-code capture (sessions/documents). Raw transcript capture is opt-in and
+/// off by default (PRD §8.12b); enabling it is an explicit, auditable choice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapturePolicy {
+    /// Whether raw prompt/transcript capture is enabled. Off by default.
+    #[serde(default)]
+    pub raw_transcripts: bool,
+    /// Retention window (days) for raw captured material.
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+
+impl Default for CapturePolicy {
+    fn default() -> Self {
+        CapturePolicy { raw_transcripts: false, retention_days: default_retention_days() }
+    }
 }
 
 impl Config {
@@ -161,6 +187,7 @@ pub fn new_config(root: &Path) -> Result<Config> {
         root_commit_sha: git::root_commit_sha(root),
         created_at: now_rfc3339(),
         ignore: Config::default_ignore(),
+        capture: CapturePolicy::default(),
     })
 }
 
