@@ -1,0 +1,41 @@
+[package]
+name = "recanta"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "CLI-first, local-first, Git-aware memory and knowledge substrate for AI agents"
+license = "Apache-2.0"
+repository = "https://github.com/nptSolutions/recanta"
+default-run = "recanta"
+
+[[bin]]
+name = "recanta"
+path = "src/main.rs"
+
+[lib]
+name = "recanta"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI parsing
+clap = { version = "4.5", features = ["derive"] }
+# Single-file storage; `bundled` compiles SQLite (with FTS5) so there is no system
+# SQLite dependency — core to the "zero mandatory runtime" guarantee (PRD §12.1).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Structured config + versioned JSON output
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Error handling
+anyhow = "1"
+# Project identity fallback when a repo has no commits yet (PRD §11.2)
+uuid = { version = "1", features = ["v4"] }
+# Timestamps for project.json / memory items
+time = { version = "0.3", features = ["formatting", "macros"] }
+
+[profile.release]
+# Small, fast-starting binary — startup latency matters because hooks fire
+# short-lived `recanta` processes constantly (PRD §7).
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

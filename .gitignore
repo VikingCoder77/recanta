@@ -4,8 +4,15 @@ recanta.db
 recanta.db-wal
 recanta.db-shm
 
+# Rust build artifacts (Cargo.lock IS committed — recanta is a binary)
+/target/
+
 # OS / editor cruft
 .DS_Store
 *.swp
 .idea/
 .vscode/
+
+# Claude's local memory store (local-first; never committed)
+CLAUDE.md
+Recanta_PRD_v4.md
