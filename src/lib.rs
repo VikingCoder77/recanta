@@ -24,5 +24,6 @@ pub mod output;
 pub mod project;
 pub mod redact;
 pub mod repo;
+pub mod sessions;
 
 pub use cli::Cli;

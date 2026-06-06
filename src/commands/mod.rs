@@ -2,6 +2,8 @@
 //! structs live next to their handler so the CLI surface and behavior stay together.
 
 pub mod brief;
+pub mod capture;
+pub mod import_sessions;
 pub mod index;
 pub mod ingest;
 pub mod init;

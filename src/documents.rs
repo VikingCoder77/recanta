@@ -118,6 +118,8 @@ fn ingest_one(
             return Ok(());
         }
     };
+    // Collapse layout whitespace (PDFs especially pad lines to page width).
+    let raw = normalize_whitespace(&raw);
 
     // Redact before storage (PRD §8.12a).
     let red = redact::redact(&raw);
@@ -167,6 +169,41 @@ fn ingest_one(
         stats.ingested += 1;
     }
     Ok(())
+}
+
+/// Collapse runs of spaces/tabs to one space, trim line ends, and squeeze blank-line
+/// runs — turning padded/extracted text (PDF page padding, Word runs) into compact,
+/// searchable prose without losing paragraph structure.
+fn normalize_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut blank_run = 0u32;
+    for line in s.lines() {
+        let mut collapsed = String::with_capacity(line.len());
+        let mut prev_space = false;
+        for ch in line.chars() {
+            if ch == ' ' || ch == '\t' {
+                if !prev_space {
+                    collapsed.push(' ');
+                }
+                prev_space = true;
+            } else {
+                collapsed.push(ch);
+                prev_space = false;
+            }
+        }
+        let trimmed = collapsed.trim_end();
+        if trimmed.is_empty() {
+            blank_run += 1;
+            if blank_run <= 1 {
+                out.push('\n');
+            }
+        } else {
+            blank_run = 0;
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+    out.trim().to_string()
 }
 
 /// A document search hit.

@@ -135,7 +135,8 @@ fn render_block(m: &Match, with_evidence: bool) -> String {
             format!("#{} [{}/{}] {} ({})\n   {}", r.id, r.scope, r.mem_type, r.title, r.importance, body)
         }
         Match::Document(d) => {
-            format!("doc:{} [document] {} ({})\n   {}", d.id, d.title, d.path, d.snippet)
+            let snip = d.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            format!("doc:{} [document] {} ({})\n   {}", d.id, d.title, d.path, snip)
         }
     }
 }

@@ -9,8 +9,12 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// All migrations, in application order. `version` must be strictly increasing.
-const MIGRATIONS: &[(u32, &str)] =
-    &[(1, MIGRATION_0001), (2, MIGRATION_0002), (3, MIGRATION_0003)];
+const MIGRATIONS: &[(u32, &str)] = &[
+    (1, MIGRATION_0001),
+    (2, MIGRATION_0002),
+    (3, MIGRATION_0003),
+    (4, MIGRATION_0004),
+];
 
 /// Highest schema version this binary knows how to produce.
 pub fn latest_version() -> u32 {
@@ -290,6 +294,27 @@ CREATE TRIGGER documents_au AFTER UPDATE ON documents BEGIN
         VALUES ('delete', old.id, old.title, old.content);
     INSERT INTO documents_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
 END;
+"#;
+
+/// Imported agent sessions (Claude Code / Codex / …). Holds derived metadata always;
+/// the raw transcript is stored only when the capture policy enables it (PRD §8.12b).
+/// Extracted memories are written separately to `memory_items` (extract-with-evidence).
+const MIGRATION_0004: &str = r#"
+CREATE TABLE sessions (
+    id                 INTEGER PRIMARY KEY,
+    project_id         TEXT REFERENCES projects(id),
+    harness            TEXT NOT NULL,        -- claude-code|codex|gemini|opencode
+    session_uid        TEXT NOT NULL,        -- harness session id (idempotency)
+    source_path        TEXT,
+    started_at         TEXT,
+    ended_at           TEXT,
+    user_messages      INTEGER NOT NULL DEFAULT 0,
+    assistant_messages INTEGER NOT NULL DEFAULT 0,
+    files_touched      TEXT,                 -- JSON array of paths
+    raw_text           TEXT,                 -- redacted transcript, only if capture on
+    imported_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, harness, session_uid)
+);
 "#;
 
 #[cfg(test)]

@@ -60,6 +60,12 @@ pub enum Command {
     /// Ingest documents (Markdown/text/PDF/Word) into project memory.
     Ingest(commands::ingest::IngestArgs),
 
+    /// Import agent session transcripts (v0.1: Claude Code).
+    ImportSessions(commands::import_sessions::ImportSessionsArgs),
+
+    /// Manage the capture policy (raw transcript capture; off by default).
+    Capture(commands::capture::CaptureArgs),
+
     // --- Declared for later milestones (PRD §17); not yet implemented. ---
     /// Record a harness/workflow event from stdin.
     RecordEvent,
@@ -90,6 +96,8 @@ impl Cli {
             Command::Inspect(args) => commands::inspect::run(args, project),
             Command::Index(args) => commands::index::run(args, project),
             Command::Ingest(args) => commands::ingest::run(args, project),
+            Command::ImportSessions(args) => commands::import_sessions::run(args, project),
+            Command::Capture(args) => commands::capture::run(args, project),
             other => Err(anyhow::anyhow!(
                 "`{}` is not implemented in this build (planned milestone, PRD §17)",
                 other.name()
@@ -113,6 +121,8 @@ impl Command {
             Command::Inspect(_) => "inspect",
             Command::Index(_) => "index",
             Command::Ingest(_) => "ingest",
+            Command::ImportSessions(_) => "import-sessions",
+            Command::Capture(_) => "capture",
             Command::RecordEvent => "record-event",
             Command::RecordEdit => "record-edit",
             Command::Migrate => "migrate",
