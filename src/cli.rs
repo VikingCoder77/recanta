@@ -33,19 +33,22 @@ pub enum Command {
     /// Report project, branch, dirty state, schema version, DB health and size.
     Status,
 
+    /// Compact, task-aware fresh-session briefing (token-budgeted).
+    Brief(commands::brief::BriefArgs),
+
+    /// Hybrid search over memory (FTS in v0.1).
+    Search(commands::search::SearchArgs),
+
+    /// Record a durable memory (user/project/repo/branch/symbol scope).
+    Remember(commands::remember::RememberArgs),
+
     // --- Declared for later milestones (PRD §17); not yet implemented. ---
     /// Install non-destructive hooks/adapters (v0.1: git post-commit + Claude Code).
     Install,
     /// Remove Recanta managed blocks installed by `install`.
     Uninstall,
-    /// Compact, task-aware fresh-session briefing (token-budgeted).
-    Brief,
-    /// Hybrid search over memory and code (FTS in v0.1).
-    Search,
     /// Inspect a file/function/class/module/memory/commit.
     Inspect,
-    /// Record a durable memory (user/project/repo/branch/symbol scope).
-    Remember,
     /// Record a harness/workflow event from stdin.
     RecordEvent,
     /// Record an edit (e.g. `git diff | recanta record-edit --stdin`).
@@ -66,9 +69,13 @@ impl Cli {
 
     /// Execute an already-parsed CLI. Separated for testing.
     pub fn run(self) -> Result<()> {
+        let project = self.project.as_deref();
         match self.command {
-            Command::Init(args) => commands::init::run(args, self.project.as_deref()),
-            Command::Status => commands::status::run(self.project.as_deref()),
+            Command::Init(args) => commands::init::run(args, project),
+            Command::Status => commands::status::run(project),
+            Command::Brief(args) => commands::brief::run(args, project),
+            Command::Search(args) => commands::search::run(args, project),
+            Command::Remember(args) => commands::remember::run(args, project),
             other => Err(anyhow::anyhow!(
                 "`{}` is not implemented in this build (planned milestone, PRD §17)",
                 other.name()
@@ -83,12 +90,12 @@ impl Command {
         match self {
             Command::Init(_) => "init",
             Command::Status => "status",
+            Command::Brief(_) => "brief",
+            Command::Search(_) => "search",
+            Command::Remember(_) => "remember",
             Command::Install => "install",
             Command::Uninstall => "uninstall",
-            Command::Brief => "brief",
-            Command::Search => "search",
             Command::Inspect => "inspect",
-            Command::Remember => "remember",
             Command::RecordEvent => "record-event",
             Command::RecordEdit => "record-edit",
             Command::RecordCommit => "record-commit",
