@@ -13,6 +13,8 @@
 pub mod cli;
 pub mod commands;
 pub mod db;
+pub mod documents;
+pub mod extract;
 pub mod git;
 pub mod graph;
 pub mod hash;

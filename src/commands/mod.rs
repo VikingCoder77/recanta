@@ -3,6 +3,7 @@
 
 pub mod brief;
 pub mod index;
+pub mod ingest;
 pub mod init;
 pub mod inspect;
 pub mod record_commit;

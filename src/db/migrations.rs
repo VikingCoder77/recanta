@@ -9,7 +9,8 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// All migrations, in application order. `version` must be strictly increasing.
-const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_0001), (2, MIGRATION_0002)];
+const MIGRATIONS: &[(u32, &str)] =
+    &[(1, MIGRATION_0001), (2, MIGRATION_0002), (3, MIGRATION_0003)];
 
 /// Highest schema version this binary knows how to produce.
 pub fn latest_version() -> u32 {
@@ -252,6 +253,43 @@ CREATE TABLE redaction_audit (
 /// detection (PRD §8.11).
 const MIGRATION_0002: &str = r#"
 ALTER TABLE repositories ADD COLUMN indexed_commit TEXT;
+"#;
+
+/// Document ingestion (general AIOS memory): non-code documents (Markdown/text/PDF/
+/// Word) stored as redacted evidence with their own FTS index. Distinct from
+/// `memory_items` — documents are evidence/knowledge, not distilled memories.
+const MIGRATION_0003: &str = r#"
+CREATE TABLE documents (
+    id           INTEGER PRIMARY KEY,
+    project_id   TEXT REFERENCES projects(id),
+    path         TEXT NOT NULL,
+    format       TEXT NOT NULL,        -- markdown|text|pdf|docx
+    title        TEXT,
+    content      TEXT NOT NULL,        -- redacted extracted text (the evidence)
+    content_hash TEXT NOT NULL,        -- sha256 of redacted text; change detection
+    char_count   INTEGER,
+    status       TEXT NOT NULL DEFAULT 'active',
+    ingested_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, path)
+);
+
+CREATE VIRTUAL TABLE documents_fts USING fts5(
+    title, content,
+    content='documents', content_rowid='id',
+    tokenize='unicode61'
+);
+CREATE TRIGGER documents_ai AFTER INSERT ON documents BEGIN
+    INSERT INTO documents_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
+CREATE TRIGGER documents_ad AFTER DELETE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, content)
+        VALUES ('delete', old.id, old.title, old.content);
+END;
+CREATE TRIGGER documents_au AFTER UPDATE ON documents BEGIN
+    INSERT INTO documents_fts(documents_fts, rowid, title, content)
+        VALUES ('delete', old.id, old.title, old.content);
+    INSERT INTO documents_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
 "#;
 
 #[cfg(test)]

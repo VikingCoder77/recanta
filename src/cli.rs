@@ -57,6 +57,9 @@ pub enum Command {
     /// (Re)build the code graph index.
     Index(commands::index::IndexArgs),
 
+    /// Ingest documents (Markdown/text/PDF/Word) into project memory.
+    Ingest(commands::ingest::IngestArgs),
+
     // --- Declared for later milestones (PRD §17); not yet implemented. ---
     /// Record a harness/workflow event from stdin.
     RecordEvent,
@@ -86,6 +89,7 @@ impl Cli {
             Command::Uninstall(args) => crate::install::uninstall(args, project),
             Command::Inspect(args) => commands::inspect::run(args, project),
             Command::Index(args) => commands::index::run(args, project),
+            Command::Ingest(args) => commands::ingest::run(args, project),
             other => Err(anyhow::anyhow!(
                 "`{}` is not implemented in this build (planned milestone, PRD §17)",
                 other.name()
@@ -108,6 +112,7 @@ impl Command {
             Command::Uninstall(_) => "uninstall",
             Command::Inspect(_) => "inspect",
             Command::Index(_) => "index",
+            Command::Ingest(_) => "ingest",
             Command::RecordEvent => "record-event",
             Command::RecordEdit => "record-edit",
             Command::Migrate => "migrate",
