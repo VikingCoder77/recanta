@@ -1,0 +1,11 @@
+# Recanta local memory store (local-first; never committed)
+.recanta/
+recanta.db
+recanta.db-wal
+recanta.db-shm
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/
