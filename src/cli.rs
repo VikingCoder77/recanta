@@ -42,19 +42,22 @@ pub enum Command {
     /// Record a durable memory (user/project/repo/branch/symbol scope).
     Remember(commands::remember::RememberArgs),
 
-    // --- Declared for later milestones (PRD §17); not yet implemented. ---
+    /// Record a commit's metadata (fired by the post-commit hook).
+    RecordCommit(commands::record_commit::RecordCommitArgs),
+
     /// Install non-destructive hooks/adapters (v0.1: git post-commit + Claude Code).
-    Install,
+    Install(crate::install::InstallArgs),
+
     /// Remove Recanta managed blocks installed by `install`.
-    Uninstall,
+    Uninstall(crate::install::UninstallArgs),
+
+    // --- Declared for later milestones (PRD §17); not yet implemented. ---
     /// Inspect a file/function/class/module/memory/commit.
     Inspect,
     /// Record a harness/workflow event from stdin.
     RecordEvent,
     /// Record an edit (e.g. `git diff | recanta record-edit --stdin`).
     RecordEdit,
-    /// Record a commit's metadata + changed symbols (fired by post-commit hook).
-    RecordCommit,
     /// (Re)build the code graph index.
     Index,
     /// Run pending SQLite schema migrations.
@@ -76,6 +79,9 @@ impl Cli {
             Command::Brief(args) => commands::brief::run(args, project),
             Command::Search(args) => commands::search::run(args, project),
             Command::Remember(args) => commands::remember::run(args, project),
+            Command::RecordCommit(args) => commands::record_commit::run(args, project),
+            Command::Install(args) => crate::install::run(args, project),
+            Command::Uninstall(args) => crate::install::uninstall(args, project),
             other => Err(anyhow::anyhow!(
                 "`{}` is not implemented in this build (planned milestone, PRD §17)",
                 other.name()
@@ -93,12 +99,12 @@ impl Command {
             Command::Brief(_) => "brief",
             Command::Search(_) => "search",
             Command::Remember(_) => "remember",
-            Command::Install => "install",
-            Command::Uninstall => "uninstall",
+            Command::RecordCommit(_) => "record-commit",
+            Command::Install(_) => "install",
+            Command::Uninstall(_) => "uninstall",
             Command::Inspect => "inspect",
             Command::RecordEvent => "record-event",
             Command::RecordEdit => "record-edit",
-            Command::RecordCommit => "record-commit",
             Command::Index => "index",
             Command::Migrate => "migrate",
         }

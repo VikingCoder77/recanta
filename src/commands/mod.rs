@@ -3,6 +3,7 @@
 
 pub mod brief;
 pub mod init;
+pub mod record_commit;
 pub mod remember;
 pub mod search;
 pub mod status;

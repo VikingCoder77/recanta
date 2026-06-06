@@ -31,6 +31,8 @@ anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 # Timestamps for project.json / memory items
 time = { version = "0.3", features = ["formatting", "macros"] }
+# Privacy hashing (author identity, content digests) — PRD §11.1, §8.12
+sha2 = "0.10"
 
 [profile.release]
 # Small, fast-starting binary — startup latency matters because hooks fire
