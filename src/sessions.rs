@@ -166,6 +166,41 @@ fn import_one(
     Ok(())
 }
 
+/// A full-text hit inside a captured session transcript.
+#[derive(Debug, Clone)]
+pub struct TranscriptHit {
+    pub session_id: i64,
+    pub started_at: Option<String>,
+    pub snippet: String,
+    pub rank: f64,
+}
+
+/// Search captured chat transcripts (only sessions imported with capture on). This is
+/// what lets retrieval recall what was discussed many sessions ago (PRD §13).
+pub fn search_transcripts(conn: &Connection, match_expr: &str, limit: usize) -> Result<Vec<TranscriptHit>> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.started_at,
+                snippet(session_fts, 0, '', '', '…', 14) AS snip,
+                bm25(session_fts) AS rank
+         FROM session_fts
+         JOIN sessions s ON s.id = session_fts.rowid
+         WHERE session_fts MATCH ?1 AND s.raw_text IS NOT NULL
+         ORDER BY rank, s.id
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![match_expr, limit as i64], |r| {
+            Ok(TranscriptHit {
+                session_id: r.get(0)?,
+                started_at: r.get(1)?,
+                snippet: r.get(2)?,
+                rank: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 /// Parse a Claude Code `.jsonl` transcript into a derived summary. Tolerant of unknown
 /// line shapes — anything it can't read is skipped.
 fn parse_session(file: &Path) -> Option<SessionSummary> {
@@ -293,6 +328,32 @@ mod tests {
     fn encodes_claude_project_path() {
         let dir = claude_project_dir(Path::new("/home/u"), Path::new("/Users/tp/AI Projects/recanta"));
         assert!(dir.ends_with("-Users-tp-AI-Projects-recanta"));
+    }
+
+    #[test]
+    fn captured_transcript_is_searchable() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::migrate(&conn).unwrap();
+        conn.execute("INSERT INTO projects (id, name, root_path) VALUES ('p','p','/tmp')", []).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (project_id, harness, session_uid, raw_text)
+             VALUES ('p', 'claude-code', 's1', 'user: q assistant: we shard by tenant_id past 500 customers')",
+            [],
+        ).unwrap();
+
+        let q = crate::memory::fts_query("shard tenant customers").unwrap();
+        let hits = search_transcripts(&conn, &q, 10).unwrap();
+        assert_eq!(hits.len(), 1, "captured transcript must be full-text searchable");
+        assert!(hits[0].snippet.contains("tenant_id"));
+
+        // A session with no captured transcript (capture off) must not appear.
+        conn.execute(
+            "INSERT INTO sessions (project_id, harness, session_uid, raw_text)
+             VALUES ('p', 'claude-code', 's2', NULL)",
+            [],
+        ).unwrap();
+        let none = search_transcripts(&conn, &crate::memory::fts_query("anything").unwrap(), 10).unwrap();
+        assert!(none.iter().all(|h| h.session_id != 2));
     }
 
     #[test]

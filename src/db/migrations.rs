@@ -14,6 +14,7 @@ const MIGRATIONS: &[(u32, &str)] = &[
     (2, MIGRATION_0002),
     (3, MIGRATION_0003),
     (4, MIGRATION_0004),
+    (5, MIGRATION_0005),
 ];
 
 /// Highest schema version this binary knows how to produce.
@@ -315,6 +316,30 @@ CREATE TABLE sessions (
     imported_at        TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, harness, session_uid)
 );
+"#;
+
+/// Make captured chat transcripts full-text searchable so retrieval can recall what was
+/// discussed many sessions ago — not just a one-line summary. Indexes `sessions.raw_text`
+/// (populated only when capture is enabled), so capture-off sessions stay out of it.
+const MIGRATION_0005: &str = r#"
+-- External-content FTS: the FTS column name must match the content table's column
+-- (`raw_text`), so FTS5 can read it back for snippet()/bm25().
+CREATE VIRTUAL TABLE session_fts USING fts5(
+    raw_text,
+    content='sessions', content_rowid='id', tokenize='unicode61'
+);
+CREATE TRIGGER sessions_ai AFTER INSERT ON sessions BEGIN
+    INSERT INTO session_fts(rowid, raw_text) VALUES (new.id, COALESCE(new.raw_text, ''));
+END;
+CREATE TRIGGER sessions_ad AFTER DELETE ON sessions BEGIN
+    INSERT INTO session_fts(session_fts, rowid, raw_text)
+        VALUES ('delete', old.id, COALESCE(old.raw_text, ''));
+END;
+CREATE TRIGGER sessions_au AFTER UPDATE ON sessions BEGIN
+    INSERT INTO session_fts(session_fts, rowid, raw_text)
+        VALUES ('delete', old.id, COALESCE(old.raw_text, ''));
+    INSERT INTO session_fts(rowid, raw_text) VALUES (new.id, COALESCE(new.raw_text, ''));
+END;
 "#;
 
 #[cfg(test)]

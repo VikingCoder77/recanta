@@ -11,12 +11,14 @@ use crate::documents::{self, DocHit};
 use crate::memory::{self, Hit, Scope};
 use crate::output::{self, Format};
 use crate::project::{self, Paths};
+use crate::sessions::{self, TranscriptHit};
 use crate::db;
 
-/// A unified search result across the memory and document corpora.
+/// A unified search result across the memory, document, and session-transcript corpora.
 enum Match {
     Memory(Hit),
     Document(DocHit),
+    Session(TranscriptHit),
 }
 
 impl Match {
@@ -24,14 +26,16 @@ impl Match {
         match self {
             Match::Memory(h) => h.rank,
             Match::Document(d) => d.rank,
+            Match::Session(s) => s.rank,
         }
     }
 
-    /// Tie-break key: keep memory and document id-spaces from colliding.
+    /// Tie-break key: keep the corpora's id-spaces from colliding.
     fn order_key(&self) -> (u8, i64) {
         match self {
             Match::Memory(h) => (0, h.row.id),
             Match::Document(d) => (1, d.id),
+            Match::Session(s) => (2, s.session_id),
         }
     }
 }
@@ -75,9 +79,11 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
             let conn = db::open_existing(&paths.db)?;
             let filter = args.scope.filter(|s| *s != Scope::User);
             results.extend(memory::search(&conn, &match_expr, filter, FETCH_LIMIT)?.into_iter().map(Match::Memory));
-            // Documents have no scope; include them only on an unrestricted search.
+            // Documents and session transcripts have no scope; include them only on an
+            // unrestricted search.
             if args.scope.is_none() {
                 results.extend(documents::search(&conn, &match_expr, FETCH_LIMIT)?.into_iter().map(Match::Document));
+                results.extend(sessions::search_transcripts(&conn, &match_expr, FETCH_LIMIT)?.into_iter().map(Match::Session));
             }
         }
     }
@@ -115,6 +121,7 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
                 match m {
                     Match::Memory(h) => println!("{}", h.row.id),
                     Match::Document(d) => println!("doc:{}", d.id),
+                    Match::Session(s) => println!("session:{}", s.session_id),
                 }
             }
         }
@@ -138,7 +145,17 @@ fn render_block(m: &Match, with_evidence: bool) -> String {
             let snip = d.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
             format!("doc:{} [document] {} ({})\n   {}", d.id, d.title, d.path, snip)
         }
+        Match::Session(s) => {
+            let snip = s.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            let when = s.started_at.as_deref().map(short_date).unwrap_or("unknown date");
+            format!("session:{} [chat {}]\n   {}", s.session_id, when, snip)
+        }
     }
+}
+
+/// `2026-06-06T09:00:00Z` → `2026-06-06`.
+fn short_date(ts: &str) -> &str {
+    ts.split('T').next().unwrap_or(ts)
 }
 
 fn render_json(query: &str, results: &[Match]) -> Result<String> {
@@ -164,6 +181,13 @@ fn render_json(query: &str, results: &[Match]) -> Result<String> {
                 "path": d.path,
                 "snippet": d.snippet,
                 "rank": d.rank,
+            }),
+            Match::Session(s) => json!({
+                "kind": "session",
+                "id": s.session_id,
+                "started_at": s.started_at,
+                "snippet": s.snippet,
+                "rank": s.rank,
             }),
         })
         .collect();
