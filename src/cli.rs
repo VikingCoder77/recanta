@@ -51,15 +51,17 @@ pub enum Command {
     /// Remove Recanta managed blocks installed by `install`.
     Uninstall(crate::install::UninstallArgs),
 
+    /// Inspect a function/class/file from the code graph.
+    Inspect(commands::inspect::InspectArgs),
+
+    /// (Re)build the code graph index.
+    Index(commands::index::IndexArgs),
+
     // --- Declared for later milestones (PRD §17); not yet implemented. ---
-    /// Inspect a file/function/class/module/memory/commit.
-    Inspect,
     /// Record a harness/workflow event from stdin.
     RecordEvent,
     /// Record an edit (e.g. `git diff | recanta record-edit --stdin`).
     RecordEdit,
-    /// (Re)build the code graph index.
-    Index,
     /// Run pending SQLite schema migrations.
     Migrate,
 }
@@ -82,6 +84,8 @@ impl Cli {
             Command::RecordCommit(args) => commands::record_commit::run(args, project),
             Command::Install(args) => crate::install::run(args, project),
             Command::Uninstall(args) => crate::install::uninstall(args, project),
+            Command::Inspect(args) => commands::inspect::run(args, project),
+            Command::Index(args) => commands::index::run(args, project),
             other => Err(anyhow::anyhow!(
                 "`{}` is not implemented in this build (planned milestone, PRD §17)",
                 other.name()
@@ -102,10 +106,10 @@ impl Command {
             Command::RecordCommit(_) => "record-commit",
             Command::Install(_) => "install",
             Command::Uninstall(_) => "uninstall",
-            Command::Inspect => "inspect",
+            Command::Inspect(_) => "inspect",
+            Command::Index(_) => "index",
             Command::RecordEvent => "record-event",
             Command::RecordEdit => "record-edit",
-            Command::Index => "index",
             Command::Migrate => "migrate",
         }
     }

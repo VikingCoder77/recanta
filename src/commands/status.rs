@@ -8,6 +8,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::project::{Config, Paths};
+use crate::repo::{self, Freshness};
 use crate::{db, git};
 
 pub fn run(project_override: Option<&Path>) -> Result<()> {
@@ -41,6 +42,23 @@ pub fn run(project_override: Option<&Path>) -> Result<()> {
         }
     } else {
         println!("git       not a git repository");
+    }
+
+    // Code graph freshness (PRD §8.11, §18).
+    if let Ok(project_id) = repo::current_project_id(&conn) {
+        if let Ok(repo_id) = repo::ensure_repository(&conn, &project_id, &paths.root, None) {
+            let line = match repo::freshness(&conn, repo_id, &paths.root)? {
+                Freshness::Fresh => "fresh".to_string(),
+                Freshness::NotIndexed => "not built (run `recanta index`)".to_string(),
+                Freshness::Unknown => "n/a (no commits)".to_string(),
+                Freshness::Stale { indexed, head } => format!(
+                    "stale: indexed {} vs HEAD {} (run `recanta index`)",
+                    short(&indexed),
+                    short(&head)
+                ),
+            };
+            println!("index     {line}");
+        }
     }
 
     println!("schema    v{schema} (binary supports v{})", db::migrations::latest_version());

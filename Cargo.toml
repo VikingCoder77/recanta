@@ -33,6 +33,12 @@ uuid = { version = "1", features = ["v4"] }
 time = { version = "0.3", features = ["formatting", "macros"] }
 # Privacy hashing (author identity, content digests) — PRD §11.1, §8.12
 sha2 = "0.10"
+# Code graph: incremental multi-language parsing (PRD §8.10). Grammars are C, built
+# via `cc`; pinned to a set compatible with the tree-sitter 0.25 ABI.
+tree-sitter = "0.25"
+tree-sitter-python = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-typescript = "0.23"
 
 [profile.release]
 # Small, fast-starting binary — startup latency matters because hooks fire

@@ -14,10 +14,12 @@ pub mod cli;
 pub mod commands;
 pub mod db;
 pub mod git;
+pub mod graph;
 pub mod hash;
 pub mod install;
 pub mod memory;
 pub mod output;
 pub mod project;
+pub mod repo;
 
 pub use cli::Cli;

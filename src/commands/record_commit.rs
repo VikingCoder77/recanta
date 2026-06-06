@@ -12,7 +12,7 @@ use clap::Args;
 use rusqlite::Connection;
 
 use crate::project::Paths;
-use crate::{db, git, hash};
+use crate::{db, git, hash, repo};
 
 #[derive(Debug, Args)]
 pub struct RecordCommitArgs {
@@ -34,8 +34,8 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     let branch = git::current_branch(&paths.root);
 
     let conn = db::open_existing(&paths.db)?;
-    let project_id = current_project_id(&conn)?;
-    let repo_id = ensure_repository(&conn, &project_id, &paths.root, branch.as_deref())?;
+    let project_id = repo::current_project_id(&conn)?;
+    let repo_id = repo::ensure_repository(&conn, &project_id, &paths.root, branch.as_deref())?;
 
     // Idempotency: the SHA already is a content digest, so key on it directly. A
     // duplicate hook fire collides on the UNIQUE key and inserts nothing (PRD §12.2).
@@ -58,6 +58,7 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
         println!("commit {} already recorded", short(&sha));
         return Ok(());
     }
+    let event_id = conn.last_insert_rowid();
 
     let author_hash = hash::short_token(&meta.author_email);
     let parents = serde_json::to_string(&meta.parents)?;
@@ -83,48 +84,51 @@ pub fn run(args: RecordCommitArgs, project_override: Option<&Path>) -> Result<()
     )
     .context("recording commit row")?;
 
+    // Link the commit to indexed symbols in the changed files (CHANGED_BY, PRD §8.10).
+    // Best-effort: only matches symbols already in the code graph.
+    let changed_symbols = link_changed_symbols(&conn, repo_id, &sha, event_id, &files)?;
+
     println!(
-        "recorded commit {} \"{}\" ({} file{})",
+        "recorded commit {} \"{}\" ({} file{}, {} symbol{})",
         short(&sha),
         truncate(&meta.subject, 60),
         files.len(),
-        if files.len() == 1 { "" } else { "s" }
+        if files.len() == 1 { "" } else { "s" },
+        changed_symbols,
+        if changed_symbols == 1 { "" } else { "s" }
     );
     Ok(())
 }
 
-/// The single project row's id (mirrors `project.json`).
-fn current_project_id(conn: &Connection) -> Result<String> {
-    conn.query_row("SELECT id FROM projects LIMIT 1", [], |r| r.get(0))
-        .context("no project row (run `recanta init`)")
-}
-
-/// Get or create the repository row for this work tree, keyed by root path.
-fn ensure_repository(
+/// Insert `symbol_changes` rows linking the commit to active symbols defined in the
+/// changed files. Returns the number of symbols linked.
+fn link_changed_symbols(
     conn: &Connection,
-    project_id: &str,
-    root: &Path,
-    default_branch: Option<&str>,
-) -> Result<i64> {
-    let root_str = root.to_string_lossy().to_string();
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM repositories WHERE project_id = ?1 AND root_path = ?2",
-            rusqlite::params![project_id, root_str],
-            |r| r.get(0),
-        )
-        .ok();
-    if let Some(id) = existing {
-        return Ok(id);
+    repo_id: i64,
+    sha: &str,
+    event_id: i64,
+    files: &[String],
+) -> Result<usize> {
+    let mut count = 0;
+    let mut select = conn.prepare(
+        "SELECT id FROM code_symbols
+         WHERE repo_id = ?1 AND file_path = ?2 AND status = 'active'
+           AND symbol_type NOT IN ('import', 'module')",
+    )?;
+    for file in files {
+        let ids = select
+            .query_map(rusqlite::params![repo_id, file], |r| r.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for id in ids {
+            conn.execute(
+                "INSERT INTO symbol_changes (symbol_id, commit_sha, event_id, change_type)
+                 VALUES (?1, ?2, ?3, 'modified')",
+                rusqlite::params![id, sha, event_id],
+            )?;
+            count += 1;
+        }
     }
-    let root_commit = git::root_commit_sha(root);
-    conn.execute(
-        "INSERT INTO repositories (project_id, root_path, root_commit_sha, default_branch)
-         VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![project_id, root_str, root_commit, default_branch],
-    )
-    .context("creating repository row")?;
-    Ok(conn.last_insert_rowid())
+    Ok(count)
 }
 
 fn short(sha: &str) -> &str {

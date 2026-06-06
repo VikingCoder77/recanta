@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// All migrations, in application order. `version` must be strictly increasing.
-const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_0001)];
+const MIGRATIONS: &[(u32, &str)] = &[(1, MIGRATION_0001), (2, MIGRATION_0002)];
 
 /// Highest schema version this binary knows how to produce.
 pub fn latest_version() -> u32 {
@@ -246,6 +246,12 @@ CREATE TABLE redaction_audit (
     span       TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+"#;
+
+/// v0.2-of-store: track the commit the code graph was last indexed at, for staleness
+/// detection (PRD §8.11).
+const MIGRATION_0002: &str = r#"
+ALTER TABLE repositories ADD COLUMN indexed_commit TEXT;
 "#;
 
 #[cfg(test)]

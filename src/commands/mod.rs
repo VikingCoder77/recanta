@@ -2,7 +2,9 @@
 //! structs live next to their handler so the CLI surface and behavior stay together.
 
 pub mod brief;
+pub mod index;
 pub mod init;
+pub mod inspect;
 pub mod record_commit;
 pub mod remember;
 pub mod search;
