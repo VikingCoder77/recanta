@@ -15,8 +15,20 @@ use serde_json::{json, Value};
 use super::{Action, Plan, Verb};
 
 /// Marker that identifies Recanta-owned hook commands for clean uninstall.
-pub const MARKER: &str = "# recanta:session-start";
-const COMMAND: &str = "recanta brief --budget 1200 # recanta:session-start";
+/// Marker comment (inert in shell) tagging every Recanta-owned hook command, for exact
+/// removal on uninstall.
+pub const MARKER: &str = "# recanta:";
+
+/// The hooks Recanta installs: (event, optional matcher, command).
+const HOOKS: &[(&str, Option<&str>, &str)] = &[
+    ("SessionStart", None, "recanta brief --budget 1200 # recanta:session-start"),
+    (
+        "PostToolUse",
+        Some("Edit|Write|MultiEdit|NotebookEdit"),
+        "recanta record-edit --stdin --source claude-code # recanta:post-edit",
+    ),
+    ("Stop", None, "recanta record-event --type harness.stop --stdin # recanta:stop"),
+];
 
 /// Plan the Claude Code settings merge for `root/.claude/settings.json`.
 pub fn plan(root: &Path) -> Result<Plan> {
@@ -31,11 +43,11 @@ pub fn plan(root: &Path) -> Result<Plan> {
     };
 
     if already_installed(&settings) {
-        plan.notes.push("Claude Code SessionStart hook already installed".into());
+        plan.notes.push("Claude Code hooks already installed".into());
         return Ok(plan);
     }
 
-    inject_session_start(&mut settings);
+    inject_hooks(&mut settings);
     let new_content = serde_json::to_string_pretty(&settings)? + "\n";
     let verb = if path.exists() { Verb::Update } else { Verb::Create };
 
@@ -46,11 +58,11 @@ pub fn plan(root: &Path) -> Result<Plan> {
         verb,
         new_content,
         executable: false,
-        block_id: "claude-session-start".to_string(),
-        preview: format!("SessionStart → `{COMMAND}`"),
+        block_id: "claude-hooks".to_string(),
+        preview: "SessionStart→brief, PostToolUse→record-edit, Stop→record-event".to_string(),
     });
     plan.notes.push(
-        "Claude Code shows a folder-trust prompt; approve this project or the hook \
+        "Claude Code shows a folder-trust prompt; approve this project or the hooks \
          won't run."
             .into(),
     );
@@ -90,11 +102,13 @@ pub fn strip(text: &str) -> Result<Option<String>> {
 }
 
 fn already_installed(settings: &Value) -> bool {
-    settings
-        .get("hooks")
-        .and_then(|h| h.get("SessionStart"))
-        .and_then(|s| s.as_array())
-        .is_some_and(|groups| groups.iter().any(group_is_ours))
+    let Some(hooks) = settings.get("hooks").and_then(|h| h.as_object()) else {
+        return false;
+    };
+    hooks
+        .values()
+        .filter_map(|g| g.as_array())
+        .any(|groups| groups.iter().any(group_is_ours))
 }
 
 /// A hook group is Recanta's if any of its commands carries our marker.
@@ -111,7 +125,7 @@ fn group_is_ours(group: &Value) -> bool {
         })
 }
 
-fn inject_session_start(settings: &mut Value) {
+fn inject_hooks(settings: &mut Value) {
     if !settings.is_object() {
         *settings = json!({});
     }
@@ -120,17 +134,19 @@ fn inject_session_start(settings: &mut Value) {
     if !hooks.is_object() {
         *hooks = json!({});
     }
-    let session = hooks
-        .as_object_mut()
-        .unwrap()
-        .entry("SessionStart")
-        .or_insert_with(|| json!([]));
-    if !session.is_array() {
-        *session = json!([]);
+    let hooks = hooks.as_object_mut().unwrap();
+
+    for (event, matcher, command) in HOOKS {
+        let group = match matcher {
+            Some(m) => json!({ "matcher": m, "hooks": [ { "type": "command", "command": command } ] }),
+            None => json!({ "hooks": [ { "type": "command", "command": command } ] }),
+        };
+        let arr = hooks.entry((*event).to_string()).or_insert_with(|| json!([]));
+        if !arr.is_array() {
+            *arr = json!([]);
+        }
+        arr.as_array_mut().unwrap().push(group);
     }
-    session.as_array_mut().unwrap().push(json!({
-        "hooks": [ { "type": "command", "command": COMMAND } ]
-    }));
 }
 
 #[cfg(test)]
@@ -139,11 +155,14 @@ mod tests {
 
     #[test]
     fn inject_then_strip_roundtrips() {
-        let mut s = json!({ "model": "opus", "hooks": { "Stop": [] } });
+        let mut s = json!({ "model": "opus", "hooks": { "Stop": [{"hooks":[{"type":"command","command":"echo mine"}]}] } });
         assert!(!already_installed(&s));
-        inject_session_start(&mut s);
+        inject_hooks(&mut s);
         assert!(already_installed(&s));
-        // Existing keys are preserved.
+        // All three events are installed.
+        assert!(s["hooks"]["SessionStart"].is_array());
+        assert!(s["hooks"]["PostToolUse"].is_array());
+        // Existing keys and the user's own Stop hook are preserved.
         assert_eq!(s["model"], "opus");
 
         let text = serde_json::to_string_pretty(&s).unwrap();
@@ -151,6 +170,8 @@ mod tests {
         let back: Value = serde_json::from_str(&stripped).unwrap();
         assert!(!already_installed(&back));
         assert_eq!(back["model"], "opus");
+        // The user's pre-existing Stop hook survives removal of Recanta's.
+        assert_eq!(back["hooks"]["Stop"][0]["hooks"][0]["command"], "echo mine");
     }
 
     #[test]

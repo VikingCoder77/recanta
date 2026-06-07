@@ -36,7 +36,7 @@ pub enum Command {
     /// Compact, task-aware fresh-session briefing (token-budgeted).
     Brief(commands::brief::BriefArgs),
 
-    /// Hybrid search over memory (FTS in v0.1).
+    /// Hybrid full-text search over memory, documents, and chat transcripts.
     Search(commands::search::SearchArgs),
 
     /// Record a durable memory (user/project/repo/branch/symbol scope).
@@ -45,7 +45,13 @@ pub enum Command {
     /// Record a commit's metadata (fired by the post-commit hook).
     RecordCommit(commands::record_commit::RecordCommitArgs),
 
-    /// Install non-destructive hooks/adapters (v0.1: git post-commit + Claude Code).
+    /// Record an edit from stdin (a diff or harness event; fired by the post-edit hook).
+    RecordEdit(commands::record_edit::RecordEditArgs),
+
+    /// Record a harness/workflow event from stdin (fired by the session-stop hook).
+    RecordEvent(commands::record_event::RecordEventArgs),
+
+    /// Install non-destructive hooks/adapters (git post-commit + Claude Code).
     Install(crate::install::InstallArgs),
 
     /// Remove Recanta managed blocks installed by `install`.
@@ -57,22 +63,17 @@ pub enum Command {
     /// (Re)build the code graph index.
     Index(commands::index::IndexArgs),
 
-    /// Ingest documents (Markdown/text/PDF/Word) into project memory.
+    /// Ingest documents (Markdown/text/PDF/Word/.doc) into project memory.
     Ingest(commands::ingest::IngestArgs),
 
-    /// Import agent session transcripts (v0.1: Claude Code).
+    /// Import agent session transcripts (Claude Code, Codex, Gemini, OpenCode).
     ImportSessions(commands::import_sessions::ImportSessionsArgs),
 
-    /// Manage the capture policy (raw transcript capture; off by default).
+    /// Manage the capture policy (raw transcript capture; on by default).
     Capture(commands::capture::CaptureArgs),
 
-    // --- Declared for later milestones (PRD §17); not yet implemented. ---
-    /// Record a harness/workflow event from stdin.
-    RecordEvent,
-    /// Record an edit (e.g. `git diff | recanta record-edit --stdin`).
-    RecordEdit,
-    /// Run pending SQLite schema migrations.
-    Migrate,
+    /// Apply pending SQLite schema migrations.
+    Migrate(commands::migrate::MigrateArgs),
 }
 
 impl Cli {
@@ -91,6 +92,8 @@ impl Cli {
             Command::Search(args) => commands::search::run(args, project),
             Command::Remember(args) => commands::remember::run(args, project),
             Command::RecordCommit(args) => commands::record_commit::run(args, project),
+            Command::RecordEdit(args) => commands::record_edit::run(args, project),
+            Command::RecordEvent(args) => commands::record_event::run(args, project),
             Command::Install(args) => crate::install::run(args, project),
             Command::Uninstall(args) => crate::install::uninstall(args, project),
             Command::Inspect(args) => commands::inspect::run(args, project),
@@ -98,34 +101,7 @@ impl Cli {
             Command::Ingest(args) => commands::ingest::run(args, project),
             Command::ImportSessions(args) => commands::import_sessions::run(args, project),
             Command::Capture(args) => commands::capture::run(args, project),
-            other => Err(anyhow::anyhow!(
-                "`{}` is not implemented in this build (planned milestone, PRD §17)",
-                other.name()
-            )),
-        }
-    }
-}
-
-impl Command {
-    /// Stable lowercase name, for diagnostics.
-    fn name(&self) -> &'static str {
-        match self {
-            Command::Init(_) => "init",
-            Command::Status => "status",
-            Command::Brief(_) => "brief",
-            Command::Search(_) => "search",
-            Command::Remember(_) => "remember",
-            Command::RecordCommit(_) => "record-commit",
-            Command::Install(_) => "install",
-            Command::Uninstall(_) => "uninstall",
-            Command::Inspect(_) => "inspect",
-            Command::Index(_) => "index",
-            Command::Ingest(_) => "ingest",
-            Command::ImportSessions(_) => "import-sessions",
-            Command::Capture(_) => "capture",
-            Command::RecordEvent => "record-event",
-            Command::RecordEdit => "record-edit",
-            Command::Migrate => "migrate",
+            Command::Migrate(args) => commands::migrate::run(args, project),
         }
     }
 }
