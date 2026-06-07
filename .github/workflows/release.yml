@@ -1,0 +1,83 @@
+name: release
+
+# Build prebuilt binaries on every `vX.Y.Z` tag and attach them to a GitHub Release,
+# so users can download instead of building from source. Only controlled values
+# (matrix.*, github.workspace) are interpolated — no untrusted input.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: recanta-linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: recanta-macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+          - name: recanta-macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+          - name: recanta-windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          dist="${{ matrix.name }}"
+          mkdir "$dist"
+          cp "target/${{ matrix.target }}/release/recanta" "$dist/"
+          cp README.md CHANGELOG.md LICENSE "$dist/"
+          tar -czf "$dist.tar.gz" "$dist"
+          shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dist = "${{ matrix.name }}"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/recanta.exe" $dist
+          Copy-Item README.md, CHANGELOG.md, LICENSE $dist
+          Compress-Archive -Path $dist -DestinationPath "$dist.zip"
+          (Get-FileHash "$dist.zip" -Algorithm SHA256).Hash | Out-File "$dist.zip.sha256"
+
+      - name: Publish to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.tar.gz.sha256
+            ${{ matrix.name }}.zip
+            ${{ matrix.name }}.zip.sha256
+          body: |
+            Recanta v0.1.0 — a CLI-first, local-first memory substrate for AI agents.
+            Download the archive for your platform below; see CHANGELOG.md for details.
+          fail_on_unmatched_files: false

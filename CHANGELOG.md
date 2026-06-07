@@ -1,0 +1,65 @@
+# Changelog
+
+All notable changes to Recanta are documented here. This project adheres to
+[Semantic Versioning](https://semver.org/).
+
+## [0.1.0] - 2026-06-07
+
+First release: a complete, local-first memory substrate for AI agents. Every command in
+the v0.1 surface is implemented; there are no stubs.
+
+### Core
+- **CLI + storage**: a single SQLite file (`.recanta/recanta.db`) in WAL mode with a
+  forward-only schema migration runner and an idempotent, append-only event log. No
+  daemon, no server, no required LLM or embeddings.
+- **Project identity** via the Git root-commit SHA (stable across clones), with a UUID
+  fallback for repos with no commits.
+- **Scopes**: `user` (global, cross-project) plus `project` / `repo` / `branch` / `symbol`.
+- **Deterministic, budgeted output**: every query enforces `--budget` (output never
+  exceeds it); `--format compact|json|ids-only`, with a versioned JSON schema.
+
+### Memory & retrieval
+- `remember` durable memories (decisions, tasks, preferences, warnings, …).
+- `search` — FTS5/BM25 across **memory, documents, and chat transcripts** in one ranked
+  result set; `brief` — a compact, task-aware fresh-session briefing; `inspect` —
+  function/class/file location, signature, and recent changes.
+
+### Code intelligence
+- Tree-sitter **code graph** for Python, JavaScript/JSX, TypeScript, and TSX: `DEFINES`,
+  file-level `IMPORTS`, and `CHANGED_BY` edges; symbol identity is `qualified_name` +
+  body-hash; vanished symbols are marked deleted, never silently dropped. Stale-index
+  detection (indexed commit vs HEAD) surfaced in `status` and `inspect`.
+
+### Git & hooks
+- `record-commit` / `record-edit` / `record-event` ingest commits, diffs, and harness
+  events idempotently.
+- **Non-destructive installer** (`install` / `uninstall`): detects the real hook
+  mechanism (`core.hooksPath` / Husky / pre-commit / lefthook), dry-runs by default, backs
+  up every touched file, edits only inside managed blocks, chains existing hooks, and
+  fails open. Wires Git `post-commit` and the Claude Code hook set
+  (SessionStart → `brief`, PostToolUse → `record-edit`, Stop → `record-event`).
+
+### General-purpose (AIOS) ingestion
+- **Documents**: `ingest` Markdown, text, PDF, Word `.docx`, and legacy `.doc` (via
+  `textutil`/`antiword`/`catdoc`) as redacted, searchable evidence; recurses subfolders
+  with `-r`.
+- **Sessions**: `import-sessions` from **Claude Code, Codex, Gemini CLI, and OpenCode**.
+  Extracts a per-session episodic memory and, with capture on, stores the full redacted
+  conversation full-text-indexed so old discussions stay recallable. `install` auto-imports
+  existing sessions.
+
+### Privacy
+- **Secret redaction before storage** (`redact`): known token formats and secret-named
+  assignments are redacted with an audit trail; Git SHAs, UUIDs, and hashes are
+  allowlisted (never redacted).
+- **Capture policy** (`capture enable/disable/status`): raw transcript capture defaults
+  **on** but always redacted and local-only; disable per project at any time.
+
+### Not yet included (roadmap)
+The human-facing Explorer graph UI (`serve`), local embeddings / vector search
+(`sqlite-vec` + `fastembed`), a thin MCP bridge, retention/`gc`, blast-radius code
+intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-only`, and
+dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
+tasks are writable today via `remember --type`).
+
+[0.1.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.1.0

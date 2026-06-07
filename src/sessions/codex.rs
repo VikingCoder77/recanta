@@ -94,6 +94,27 @@ fn content_text(item: &Value) -> String {
     out
 }
 
+/// Recursively collect `*.jsonl` files under a directory.
+fn jsonl_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => stack.push(path),
+                Ok(ft) if ft.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") => {
+                    out.push(path)
+                }
+                _ => {}
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,25 +140,4 @@ mod tests {
         assert_eq!(parsed.turns[0].text, "add caching");
         std::fs::remove_dir_all(&dir).ok();
     }
-}
-
-/// Recursively collect `*.jsonl` files under a directory.
-fn jsonl_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
-        for entry in rd.flatten() {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(ft) if ft.is_dir() => stack.push(path),
-                Ok(ft) if ft.is_file() && path.extension().and_then(|e| e.to_str()) == Some("jsonl") => {
-                    out.push(path)
-                }
-                _ => {}
-            }
-        }
-    }
-    out.sort();
-    out
 }
