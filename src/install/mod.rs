@@ -64,6 +64,10 @@ pub struct InstallArgs {
     /// Preview only, even if `--apply` is also given.
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Don't import existing agent sessions during install.
+    #[arg(long)]
+    pub skip_sessions: bool,
 }
 
 #[derive(Debug, Args)]
@@ -114,8 +118,39 @@ pub fn run(args: InstallArgs, project_override: Option<&Path>) -> Result<()> {
         println!("  ✓ {}", a.preview);
     }
     print_messages(&plan);
+
+    // Capture the project's existing history right away, so a fresh session can recall
+    // it (general AIOS memory). Respects the capture policy and runs all harnesses.
+    if !args.skip_sessions {
+        import_existing_sessions(&conn, &project_id, &paths);
+    }
+
     println!("\nInstalled. Backups (if any) are under {}", paths.backups.display());
     Ok(())
+}
+
+/// Best-effort import of existing agent sessions for the project. Never fails install.
+fn import_existing_sessions(conn: &Connection, project_id: &str, paths: &Paths) {
+    let Some(home) = home_dir() else { return };
+    let capture_raw = project::Config::load(&paths.config)
+        .map(|c| c.capture.raw_transcripts)
+        .unwrap_or(false);
+    match crate::sessions::import(conn, project_id, &home, &paths.root, capture_raw, "all", None) {
+        Ok(stats) if stats.imported > 0 => {
+            println!(
+                "  ✓ imported {} existing session(s) → {} memory item(s)",
+                stats.imported, stats.memories
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("recanta: session import skipped ({e:#})"),
+    }
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 pub fn uninstall(args: UninstallArgs, project_override: Option<&Path>) -> Result<()> {

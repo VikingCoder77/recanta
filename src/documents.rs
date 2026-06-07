@@ -19,6 +19,7 @@ pub enum DocFormat {
     Text,
     Pdf,
     Docx,
+    Doc,
 }
 
 impl DocFormat {
@@ -28,6 +29,7 @@ impl DocFormat {
             "txt" | "text" | "rst" | "org" | "adoc" | "log" => Some(DocFormat::Text),
             "pdf" => Some(DocFormat::Pdf),
             "docx" => Some(DocFormat::Docx),
+            "doc" => Some(DocFormat::Doc),
             _ => None,
         }
     }
@@ -38,6 +40,7 @@ impl DocFormat {
             DocFormat::Text => "text",
             DocFormat::Pdf => "pdf",
             DocFormat::Docx => "docx",
+            DocFormat::Doc => "doc",
         }
     }
 }
@@ -49,6 +52,7 @@ pub fn extract_text(path: &Path, format: DocFormat) -> Result<String> {
             .with_context(|| format!("reading {}", path.display())),
         DocFormat::Pdf => crate::extract::pdf(path),
         DocFormat::Docx => crate::extract::docx(path),
+        DocFormat::Doc => crate::extract::doc(path),
     }
 }
 
@@ -91,7 +95,7 @@ pub fn ingest_paths(
         } else if path.is_file() {
             match path.extension().and_then(|e| e.to_str()).and_then(DocFormat::from_extension) {
                 Some(_) => ingest_one(conn, project_id, path, &mut stats)?,
-                None => bail!("unsupported document type: {} (try .md/.txt/.pdf/.docx)", path.display()),
+                None => bail!("unsupported document type: {} (try .md/.txt/.pdf/.docx/.doc)", path.display()),
             }
         } else {
             bail!("no such file or directory: {}", path.display());

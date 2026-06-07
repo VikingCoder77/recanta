@@ -64,6 +64,9 @@ pub fn run(args: InitArgs, project_override: Option<&Path>) -> Result<()> {
     let conn = db::open(&paths.db)?;
     upsert_project_row(&conn, &config, &root)?;
 
+    // Keep the local store out of version control (it is per-machine, local-first).
+    let ignored = ensure_gitignored(&root)?;
+
     println!("Initialized Recanta in {}", paths.dir.display());
     println!("  project: {} ({})", config.name, config.id);
     match &config.root_commit_sha {
@@ -71,8 +74,38 @@ pub fn run(args: InitArgs, project_override: Option<&Path>) -> Result<()> {
         None => println!("  identity: uuid (no git commits yet)"),
     }
     println!("  store:   {}", paths.db.display());
+    if ignored {
+        println!("  added .recanta/ to .gitignore");
+    }
     println!("\nNext: `recanta status`, then `recanta install` to wire up hooks.");
     Ok(())
+}
+
+/// Ensure `.recanta/` is git-ignored (the store is local-first, never committed).
+/// Non-destructive: appends to an existing `.gitignore`, never rewrites it. Returns
+/// whether a change was made.
+fn ensure_gitignored(root: &Path) -> Result<bool> {
+    if !crate::git::is_repo(root) {
+        return Ok(false);
+    }
+    let path = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().any(|l| {
+        let l = l.trim().trim_end_matches('/');
+        l == ".recanta"
+    }) {
+        return Ok(false);
+    }
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str("# Recanta local memory store (per-machine, local-first)\n.recanta/\n");
+    std::fs::write(&path, out).with_context(|| format!("updating {}", path.display()))?;
+    Ok(true)
 }
 
 /// Insert or refresh the single project row mirroring `project.json`.

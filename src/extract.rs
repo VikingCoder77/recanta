@@ -13,6 +13,31 @@ pub fn pdf(path: &Path) -> Result<String> {
         .with_context(|| format!("extracting text from PDF {}", path.display()))
 }
 
+/// Extract text from a legacy Word `.doc` (OLE/CFB binary). There is no reliable
+/// pure-Rust reader, so shell out to whichever common converter is installed —
+/// `textutil` (macOS), `antiword`, or `catdoc`. Errors with guidance if none exist.
+pub fn doc(path: &Path) -> Result<String> {
+    use std::process::Command;
+    let candidates: &[(&str, &[&str])] = &[
+        ("textutil", &["-convert", "txt", "-stdout"]),
+        ("antiword", &[]),
+        ("catdoc", &[]),
+    ];
+    for (tool, args) in candidates {
+        let out = Command::new(tool).args(*args).arg(path).output();
+        if let Ok(out) = out {
+            if out.status.success() {
+                return Ok(String::from_utf8_lossy(&out.stdout).into_owned());
+            }
+        }
+    }
+    anyhow::bail!(
+        "cannot read legacy .doc {} — install `antiword` or `catdoc` (or use macOS \
+         `textutil`), or convert it to .docx/.pdf first",
+        path.display()
+    )
+}
+
 /// Extract text from a `.docx` (Office Open XML): unzip `word/document.xml` and pull the
 /// text out of `<w:t>` runs, inserting breaks at paragraph boundaries.
 pub fn docx(path: &Path) -> Result<String> {
