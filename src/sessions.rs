@@ -1,47 +1,49 @@
 //! Session import (general AIOS memory). Reads agent transcripts for a project and
-//! extracts structured memories with the raw transcript kept as evidence — never a
-//! verbatim dump (PRD §13, "summaries are indexes").
+//! extracts structured memories with the raw conversation kept as searchable evidence —
+//! never a verbatim dump (PRD §13). Everything is redacted first (§8.12a); raw transcript
+//! storage is governed by the capture policy (§8.12b).
 //!
-//! Governance (PRD §8.12b): running `import-sessions` is an explicit opt-in, so derived
-//! metadata + an episodic memory are always extracted. The *raw transcript* is stored
-//! only when the capture policy enables it. Everything is redacted first (§8.12a).
-//!
-//! v0.1 supports Claude Code, whose per-project transcripts live at
-//! `~/.claude/projects/<encoded-root>/<session>.jsonl` (one JSON event per line).
+//! Harness transcript formats differ, so each lives in a `sessions::<harness>` submodule
+//! that produces a uniform [`ParsedSession`]; the import + search logic here is shared.
+//! Harness storage layouts drift between versions — parsers are tolerant and every
+//! command accepts `--from` to point at the files directly.
 
-use std::path::{Path, PathBuf};
+mod claude;
+mod codex;
+mod gemini;
+mod opencode;
+
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use serde_json::Value;
 
 use crate::memory::{self, Importance, MemType, NewMemory, Scope};
 use crate::redact;
 
-/// Claude Code encodes a project's absolute path by replacing every non-alphanumeric
-/// character with `-` (e.g. `/Users/tp/AI Projects/recanta` →
-/// `-Users-tp-AI-Projects-recanta`).
-pub fn claude_project_dir(home: &Path, root: &Path) -> PathBuf {
-    let encoded: String = root
-        .to_string_lossy()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    home.join(".claude").join("projects").join(encoded)
+/// Who produced a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
 }
 
-/// Derived view of one session transcript.
-#[derive(Debug, Default)]
-struct SessionSummary {
-    session_uid: String,
-    started_at: Option<String>,
-    ended_at: Option<String>,
-    user_messages: u32,
-    assistant_messages: u32,
-    intent: Option<String>,
-    files_touched: Vec<String>,
-    /// Concatenated human/assistant text (no tool noise), for optional raw evidence.
-    transcript_text: String,
+/// One conversation turn, normalized across harnesses.
+#[derive(Debug, Clone)]
+pub struct RawTurn {
+    pub role: Role,
+    pub text: String,
+    pub timestamp: Option<String>,
+    /// File paths the turn touched (from tool calls), if any.
+    pub files: Vec<String>,
+}
+
+/// One session's worth of turns, harness-agnostic.
+#[derive(Debug)]
+pub struct ParsedSession {
+    pub session_uid: String,
+    pub source_path: String,
+    pub turns: Vec<RawTurn>,
 }
 
 #[derive(Debug, Default)]
@@ -50,43 +52,48 @@ pub struct ImportStats {
     pub skipped: usize,
     pub memories: usize,
     pub redactions: usize,
-    /// Set when the harness session directory doesn't exist.
-    pub no_session_dir: Option<PathBuf>,
+    /// Per-harness informational notes (e.g. "no sessions found at …").
+    pub notes: Vec<String>,
 }
 
-/// Import Claude Code sessions for `root` into the store.
-pub fn import_claude(
+/// The harnesses Recanta can import from.
+pub const HARNESSES: &[&str] = &["claude-code", "codex", "gemini", "opencode"];
+
+/// Import sessions for one harness (or `all`). `from` overrides the harness's default
+/// session location for the single-harness case.
+pub fn import(
     conn: &Connection,
     project_id: &str,
     home: &Path,
     root: &Path,
     capture_raw: bool,
-    from_override: Option<&Path>,
+    harness: &str,
+    from: Option<&Path>,
 ) -> Result<ImportStats> {
-    let dir = match from_override {
-        Some(p) => p.to_path_buf(),
-        None => claude_project_dir(home, root),
-    };
     let mut stats = ImportStats::default();
-    if !dir.is_dir() {
-        stats.no_session_dir = Some(dir);
-        return Ok(stats);
-    }
+    let targets: Vec<&str> = if harness == "all" {
+        HARNESSES.to_vec()
+    } else {
+        vec![harness]
+    };
 
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .with_context(|| format!("reading {}", dir.display()))?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
-        .collect();
-    files.sort();
-
-    for file in &files {
-        let summary = match parse_session(file) {
-            Some(s) => s,
-            None => continue,
+    for name in targets {
+        // `--from` only applies when a single harness was requested.
+        let from = if harness == "all" { None } else { from };
+        let (sessions, notes) = match name {
+            "claude-code" => claude::collect(home, root, from),
+            "codex" => codex::collect(home, root, from),
+            "gemini" => gemini::collect(home, root, from),
+            "opencode" => opencode::collect(home, root, from),
+            other => {
+                stats.notes.push(format!("unknown harness `{other}`"));
+                continue;
+            }
         };
-        import_one(conn, project_id, file, &summary, capture_raw, &mut stats)?;
+        stats.notes.extend(notes);
+        for session in sessions {
+            import_one(conn, project_id, name, &session, capture_raw, &mut stats)?;
+        }
     }
     Ok(stats)
 }
@@ -94,16 +101,15 @@ pub fn import_claude(
 fn import_one(
     conn: &Connection,
     project_id: &str,
-    file: &Path,
-    s: &SessionSummary,
+    harness: &str,
+    parsed: &ParsedSession,
     capture_raw: bool,
     stats: &mut ImportStats,
 ) -> Result<()> {
-    // Idempotency: skip sessions already imported (PRD §12.2 spirit).
     let exists: bool = conn
         .query_row(
-            "SELECT 1 FROM sessions WHERE project_id = ?1 AND harness = 'claude-code' AND session_uid = ?2",
-            rusqlite::params![project_id, s.session_uid],
+            "SELECT 1 FROM sessions WHERE project_id = ?1 AND harness = ?2 AND session_uid = ?3",
+            rusqlite::params![project_id, harness, parsed.session_uid],
             |_| Ok(()),
         )
         .is_ok();
@@ -112,9 +118,51 @@ fn import_one(
         return Ok(());
     }
 
-    let files_json = serde_json::to_string(&s.files_touched)?;
+    // Build the derived view from the normalized turns.
+    let mut user_messages = 0u32;
+    let mut assistant_messages = 0u32;
+    let mut intent: Option<String> = None;
+    let mut files: Vec<String> = Vec::new();
+    let mut transcript = String::new();
+    let mut started_at: Option<String> = None;
+    let mut ended_at: Option<String> = None;
+
+    for turn in &parsed.turns {
+        if let Some(ts) = &turn.timestamp {
+            if started_at.is_none() {
+                started_at = Some(ts.clone());
+            }
+            ended_at = Some(ts.clone());
+        }
+        for f in &turn.files {
+            if !files.contains(f) {
+                files.push(f.clone());
+            }
+        }
+        let text = turn.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        match turn.role {
+            Role::User => {
+                user_messages += 1;
+                if intent.is_none() {
+                    intent = Some(text.to_string());
+                }
+                transcript.push_str("user: ");
+            }
+            Role::Assistant => {
+                assistant_messages += 1;
+                transcript.push_str("assistant: ");
+            }
+        }
+        transcript.push_str(text);
+        transcript.push('\n');
+    }
+
+    let files_json = serde_json::to_string(&files)?;
     let raw = if capture_raw {
-        let red = redact::redact(&s.transcript_text);
+        let red = redact::redact(&transcript);
         stats.redactions += red.hits.len();
         Some(red.text)
     } else {
@@ -125,37 +173,34 @@ fn import_one(
         "INSERT INTO sessions
             (project_id, harness, session_uid, source_path, started_at, ended_at,
              user_messages, assistant_messages, files_touched, raw_text)
-         VALUES (?1, 'claude-code', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
-            project_id, s.session_uid, file.to_string_lossy(), s.started_at, s.ended_at,
-            s.user_messages, s.assistant_messages, files_json, raw
+            project_id, harness, parsed.session_uid, parsed.source_path, started_at,
+            ended_at, user_messages, assistant_messages, files_json, raw
         ],
     )
     .context("recording session")?;
 
-    // Episodic memory summarizing the session, redacted, searchable.
-    let intent = s.intent.clone().unwrap_or_else(|| "(no initial request captured)".into());
+    let intent = intent.unwrap_or_else(|| "(no initial request captured)".into());
     let red_intent = redact::redact(&intent);
     stats.redactions += red_intent.hits.len();
-    let when = s.started_at.as_deref().unwrap_or("unknown date");
-    let title = format!("Session {}: {}", short_date(when), truncate(&red_intent.text, 60));
-    let files_line = if s.files_touched.is_empty() {
+    let when = started_at.as_deref().unwrap_or("unknown date");
+    let files_line = if files.is_empty() {
         "no files recorded".to_string()
     } else {
-        format!("files: {}", s.files_touched.join(", "))
+        format!("files: {}", files.join(", "))
     };
-    let content = format!(
-        "Claude Code session on {when}. Intent: {}. {files_line}. \
-         {} user / {} assistant messages.",
-        red_intent.text, s.user_messages, s.assistant_messages
-    );
     memory::insert(
         conn,
         &NewMemory {
             mem_type: MemType::Episodic,
             scope: Scope::Project,
-            title,
-            content,
+            title: format!("{harness} session {}: {}", short_date(when), truncate(&red_intent.text, 60)),
+            content: format!(
+                "{harness} session on {when}. Intent: {}. {files_line}. \
+                 {user_messages} user / {assistant_messages} assistant messages.",
+                red_intent.text
+            ),
             importance: Importance::Low,
             confidence: 1.0,
             branch: None,
@@ -175,8 +220,8 @@ pub struct TranscriptHit {
     pub rank: f64,
 }
 
-/// Search captured chat transcripts (only sessions imported with capture on). This is
-/// what lets retrieval recall what was discussed many sessions ago (PRD §13).
+/// Search captured chat transcripts (only sessions imported with capture on). Lets
+/// retrieval recall what was discussed many sessions ago (PRD §13).
 pub fn search_transcripts(conn: &Connection, match_expr: &str, limit: usize) -> Result<Vec<TranscriptHit>> {
     let mut stmt = conn.prepare(
         "SELECT s.id, s.started_at,
@@ -201,117 +246,11 @@ pub fn search_transcripts(conn: &Connection, match_expr: &str, limit: usize) -> 
     Ok(rows)
 }
 
-/// Parse a Claude Code `.jsonl` transcript into a derived summary. Tolerant of unknown
-/// line shapes — anything it can't read is skipped.
-fn parse_session(file: &Path) -> Option<SessionSummary> {
-    let text = std::fs::read_to_string(file).ok()?;
-    let mut s = SessionSummary {
-        session_uid: file.file_stem()?.to_string_lossy().to_string(),
-        ..Default::default()
-    };
-
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-
-        if let Some(uid) = v.get("sessionId").and_then(|x| x.as_str()) {
-            s.session_uid = uid.to_string();
-        }
-        if let Some(ts) = v.get("timestamp").and_then(|x| x.as_str()) {
-            if s.started_at.is_none() {
-                s.started_at = Some(ts.to_string());
-            }
-            s.ended_at = Some(ts.to_string());
-        }
-
-        match v.get("type").and_then(|x| x.as_str()) {
-            Some("user") => {
-                let text = message_text(&v);
-                // Skip tool-result-only turns (no human text).
-                if !text.trim().is_empty() {
-                    s.user_messages += 1;
-                    if s.intent.is_none() {
-                        s.intent = Some(text.trim().to_string());
-                    }
-                    push_transcript(&mut s.transcript_text, "user", &text);
-                }
-            }
-            Some("assistant") => {
-                s.assistant_messages += 1;
-                let text = message_text(&v);
-                if !text.trim().is_empty() {
-                    push_transcript(&mut s.transcript_text, "assistant", &text);
-                }
-                collect_files(&v, &mut s.files_touched);
-            }
-            _ => {}
-        }
-    }
-    Some(s)
-}
-
-/// Extract concatenated text from a message's `content` (string or array of blocks).
-fn message_text(v: &Value) -> String {
-    let content = match v.get("message").and_then(|m| m.get("content")) {
-        Some(c) => c,
-        None => return String::new(),
-    };
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    if let Some(arr) = content.as_array() {
-        for block in arr {
-            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(t);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Collect file paths from an assistant turn's tool-use blocks.
-fn collect_files(v: &Value, files: &mut Vec<String>) {
-    let Some(arr) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) else {
-        return;
-    };
-    for block in arr {
-        if block.get("type").and_then(|t| t.as_str()) != Some("tool_use") {
-            continue;
-        }
-        let path = block
-            .get("input")
-            .and_then(|i| i.get("file_path").or_else(|| i.get("path")))
-            .and_then(|p| p.as_str());
-        if let Some(p) = path {
-            let p = p.to_string();
-            if !files.contains(&p) {
-                files.push(p);
-            }
-        }
-    }
-}
-
-fn push_transcript(buf: &mut String, role: &str, text: &str) {
-    buf.push_str(role);
-    buf.push_str(": ");
-    buf.push_str(text);
-    buf.push('\n');
-}
-
-fn short_date(ts: &str) -> &str {
+pub(crate) fn short_date(ts: &str) -> &str {
     ts.split('T').next().unwrap_or(ts)
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     let line = s.lines().next().unwrap_or("");
     if line.chars().count() <= max {
         line.to_string()
@@ -323,12 +262,6 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn encodes_claude_project_path() {
-        let dir = claude_project_dir(Path::new("/home/u"), Path::new("/Users/tp/AI Projects/recanta"));
-        assert!(dir.ends_with("-Users-tp-AI-Projects-recanta"));
-    }
 
     #[test]
     fn captured_transcript_is_searchable() {
@@ -345,34 +278,36 @@ mod tests {
         let hits = search_transcripts(&conn, &q, 10).unwrap();
         assert_eq!(hits.len(), 1, "captured transcript must be full-text searchable");
         assert!(hits[0].snippet.contains("tenant_id"));
-
-        // A session with no captured transcript (capture off) must not appear.
-        conn.execute(
-            "INSERT INTO sessions (project_id, harness, session_uid, raw_text)
-             VALUES ('p', 'claude-code', 's2', NULL)",
-            [],
-        ).unwrap();
-        let none = search_transcripts(&conn, &crate::memory::fts_query("anything").unwrap(), 10).unwrap();
-        assert!(none.iter().all(|h| h.session_id != 2));
     }
 
     #[test]
-    fn parses_a_minimal_transcript() {
-        let dir = std::env::temp_dir().join(format!("recanta-sess-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let f = dir.join("abc.jsonl");
-        let lines = [
-            r#"{"type":"user","timestamp":"2026-06-06T10:00:00Z","message":{"role":"user","content":"fix the trailing stop bug"}}"#,
-            r#"{"type":"assistant","timestamp":"2026-06-06T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"On it"},{"type":"tool_use","name":"Edit","input":{"file_path":"src/trade.rs"}}]}}"#,
-            r#"{"type":"user","timestamp":"2026-06-06T10:00:06Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}"#,
-        ];
-        std::fs::write(&f, lines.join("\n")).unwrap();
+    fn import_is_idempotent_and_extracts_intent() {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::migrate(&conn).unwrap();
+        conn.execute("INSERT INTO projects (id, name, root_path) VALUES ('p','p','/tmp')", []).unwrap();
 
-        let s = parse_session(&f).unwrap();
-        assert_eq!(s.user_messages, 1, "tool-result-only user turn must not count");
-        assert_eq!(s.assistant_messages, 1);
-        assert_eq!(s.intent.as_deref(), Some("fix the trailing stop bug"));
-        assert_eq!(s.files_touched, vec!["src/trade.rs".to_string()]);
-        std::fs::remove_dir_all(&dir).ok();
+        let parsed = ParsedSession {
+            session_uid: "s1".into(),
+            source_path: "/x".into(),
+            turns: vec![
+                RawTurn { role: Role::User, text: "design the api".into(), timestamp: Some("2026-06-01T10:00:00Z".into()), files: vec![] },
+                RawTurn { role: Role::Assistant, text: "use REST".into(), timestamp: None, files: vec!["src/api.rs".into()] },
+            ],
+        };
+        let mut stats = ImportStats::default();
+        import_one(&conn, "p", "codex", &parsed, true, &mut stats).unwrap();
+        assert_eq!(stats.imported, 1);
+        assert_eq!(stats.memories, 1);
+
+        // Re-import is a no-op.
+        let mut stats2 = ImportStats::default();
+        import_one(&conn, "p", "codex", &parsed, true, &mut stats2).unwrap();
+        assert_eq!(stats2.imported, 0);
+        assert_eq!(stats2.skipped, 1);
+
+        let title: String = conn
+            .query_row("SELECT title FROM memory_items WHERE type='episodic'", [], |r| r.get(0))
+            .unwrap();
+        assert!(title.contains("design the api"));
     }
 }

@@ -13,19 +13,28 @@ use crate::{db, repo, sessions};
 
 #[derive(Debug, Args)]
 pub struct ImportSessionsArgs {
-    /// Harness to import from (v0.1: claude-code).
-    #[arg(long, default_value = "claude-code")]
+    /// Harness to import from: claude-code, codex, gemini, opencode, or all.
+    #[arg(long, default_value = "all")]
     pub harness: String,
 
-    /// Override the directory of session files (otherwise derived from the project).
+    /// Override the directory of session files (single-harness imports only).
     #[arg(long)]
     pub from: Option<PathBuf>,
 }
 
 pub fn run(args: ImportSessionsArgs, project_override: Option<&Path>) -> Result<()> {
-    if args.harness != "claude-code" {
-        bail!("harness `{}` not supported yet (v0.1: claude-code)", args.harness);
+    let valid = sessions::HARNESSES.contains(&args.harness.as_str()) || args.harness == "all";
+    if !valid {
+        bail!(
+            "unknown harness `{}` (choose: {}, or all)",
+            args.harness,
+            sessions::HARNESSES.join(", ")
+        );
     }
+    if args.from.is_some() && args.harness == "all" {
+        bail!("--from requires a single --harness (it points at one harness's files)");
+    }
+
     let paths = Paths::discover(project_override)?;
     let cfg = Config::load(&paths.config)?;
     let conn = db::open_existing(&paths.db)?;
@@ -33,20 +42,15 @@ pub fn run(args: ImportSessionsArgs, project_override: Option<&Path>) -> Result<
 
     let home = home_dir()?;
     let capture_raw = cfg.capture.raw_transcripts;
-    let stats = sessions::import_claude(
+    let stats = sessions::import(
         &conn,
         &project_id,
         &home,
         &paths.root,
         capture_raw,
+        &args.harness,
         args.from.as_deref(),
     )?;
-
-    if let Some(dir) = &stats.no_session_dir {
-        println!("No Claude Code sessions found at {}", dir.display());
-        println!("(point at a directory with --from, or this project has no recorded sessions yet)");
-        return Ok(());
-    }
 
     println!(
         "Imported {} session(s) ({} skipped as already imported); created {} memory item(s).",
@@ -58,8 +62,11 @@ pub fn run(args: ImportSessionsArgs, project_override: Option<&Path>) -> Result<
     if !capture_raw && stats.imported > 0 {
         println!(
             "Raw transcripts were NOT stored (capture off). Run `recanta capture enable` \
-             to keep them as evidence."
+             to keep them as searchable evidence."
         );
+    }
+    for note in &stats.notes {
+        println!("  · {note}");
     }
     Ok(())
 }
