@@ -45,7 +45,7 @@ pub fn run(args: CaptureArgs, project_override: Option<&Path>) -> Result<()> {
             println!("Raw transcript capture DISABLED. Only derived summaries are kept.");
         }
         CaptureAction::Status => {
-            let state = if cfg.capture.raw_transcripts { "ON" } else { "OFF (default)" };
+            let state = if cfg.capture.raw_transcripts { "ON (default)" } else { "OFF" };
             println!("raw transcript capture: {state}");
             println!("retention:              {} days", cfg.capture.retention_days);
         }

@@ -108,16 +108,23 @@ pub struct Config {
     pub capture: CapturePolicy,
 }
 
-/// Governs non-code capture (sessions/documents). Raw transcript capture is opt-in and
-/// off by default (PRD §8.12b); enabling it is an explicit, auditable choice.
+/// Governs non-code capture (sessions/documents). For the AIOS "never forget" goal,
+/// raw transcript capture is **on by default** (decided 2026-06-07) — but always
+/// redacted before storage (PRD §8.12a), and disable-able per project with
+/// `recanta capture disable`. The meaningful privacy guarantee is redaction, not
+/// abstention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapturePolicy {
-    /// Whether raw prompt/transcript capture is enabled. Off by default.
-    #[serde(default)]
+    /// Whether raw prompt/transcript capture is enabled. On by default.
+    #[serde(default = "default_raw_transcripts")]
     pub raw_transcripts: bool,
     /// Retention window (days) for raw captured material.
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
+}
+
+fn default_raw_transcripts() -> bool {
+    true
 }
 
 fn default_retention_days() -> u32 {
@@ -126,7 +133,7 @@ fn default_retention_days() -> u32 {
 
 impl Default for CapturePolicy {
     fn default() -> Self {
-        CapturePolicy { raw_transcripts: false, retention_days: default_retention_days() }
+        CapturePolicy { raw_transcripts: default_raw_transcripts(), retention_days: default_retention_days() }
     }
 }
 
