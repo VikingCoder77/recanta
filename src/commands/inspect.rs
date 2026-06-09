@@ -36,8 +36,16 @@ pub fn run(args: InspectArgs, project_override: Option<&Path>) -> Result<()> {
     let fresh = repo::freshness(&conn, repo_id, &paths.root)?;
 
     let mut blocks: Vec<String> = match args.kind.as_str() {
-        "function" | "method" => inspect_symbols(&conn, repo_id, &args.target, &["function", "method"])?,
-        "class" | "interface" => inspect_symbols(&conn, repo_id, &args.target, &["class", "interface"])?,
+        "function" | "method" | "fn" => {
+            inspect_symbols(&conn, repo_id, &args.target, &["function", "method"])?
+        }
+        // "class" covers any type-like definition across languages.
+        "class" | "interface" | "struct" | "enum" | "trait" | "type" => inspect_symbols(
+            &conn,
+            repo_id,
+            &args.target,
+            &["class", "interface", "struct", "enum", "trait"],
+        )?,
         "file" => inspect_file(&conn, repo_id, &args.target)?,
         other => bail!("don't know how to inspect `{other}` (try: function, class, file)"),
     };

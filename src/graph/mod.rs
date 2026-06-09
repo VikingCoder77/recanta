@@ -51,38 +51,42 @@ pub fn parse_source(src: &str, lang: Lang) -> Option<FileParse> {
     Some(parse)
 }
 
-/// Recursive descent: collect definitions (tracking enclosing class/function scope to
-/// build qualified names) and imports.
+/// Recursive descent: collect definitions (tracking enclosing scope to build qualified
+/// names) and imports, driven by each language's `classify`.
 fn walk(node: Node, src: &[u8], lang: Lang, scope: &mut Vec<(String, bool)>, out: &mut FileParse) {
+    use lang::Classified;
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        let kind = child.kind();
-        if lang.import_kinds().contains(&kind) {
-            if let Some(t) = lang::import_target(child, src, lang) {
-                out.imports.push(t);
+        let in_methods = scope.last().map(|(_, m)| *m).unwrap_or(false);
+        match lang.classify(child.kind(), in_methods) {
+            Classified::Import => {
+                if let Some(t) = lang::import_target(child, src, lang) {
+                    out.imports.push(t);
+                }
             }
-            continue;
-        }
-        let is_class = lang.class_kinds().contains(&kind);
-        let is_func = lang.function_kinds().contains(&kind);
-        if is_class || is_func {
-            let name = lang::def_name(child, src).unwrap_or_else(|| "<anonymous>".into());
-            let in_class = scope.last().map(|(_, c)| *c).unwrap_or(false);
-            let text = child.utf8_text(src).unwrap_or("");
-            out.symbols.push(Symbol {
-                qualified_name: qualify(scope, &name),
-                symbol_type: lang.symbol_type(kind, in_class).to_string(),
-                signature: first_line(text),
-                start_line: child.start_position().row as i64 + 1,
-                end_line: child.end_position().row as i64 + 1,
-                body_hash: hash::sha256_hex(text),
-                name,
-            });
-            scope.push((out.symbols.last().unwrap().name.clone(), is_class));
-            walk(child, src, lang, scope, out);
-            scope.pop();
-        } else {
-            walk(child, src, lang, scope, out);
+            Classified::Def { symbol_type, emit, scopes, methods } => {
+                let name = lang::def_name(child, src).unwrap_or_else(|| "<anonymous>".into());
+                if emit {
+                    let text = child.utf8_text(src).unwrap_or("");
+                    out.symbols.push(Symbol {
+                        qualified_name: qualify(scope, &name),
+                        symbol_type: symbol_type.to_string(),
+                        signature: first_line(text),
+                        start_line: child.start_position().row as i64 + 1,
+                        end_line: child.end_position().row as i64 + 1,
+                        body_hash: hash::sha256_hex(text),
+                        name: name.clone(),
+                    });
+                }
+                if scopes {
+                    scope.push((name, methods));
+                    walk(child, src, lang, scope, out);
+                    scope.pop();
+                } else {
+                    walk(child, src, lang, scope, out);
+                }
+            }
+            Classified::Recurse => walk(child, src, lang, scope, out),
         }
     }
 }
@@ -375,6 +379,27 @@ mod tests {
         assert_eq!(active, 1);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn extracts_rust_symbols_with_impl_methods() {
+        let src = "use std::collections::HashMap;\n\
+                   pub struct Trader { balance: u32 }\n\
+                   enum Side { Buy, Sell }\n\
+                   impl Trader {\n    pub fn new() -> Self { Self { balance: 0 } }\n    fn buy(&self) {}\n}\n\
+                   trait Exec { fn run(&self); }\n\
+                   fn main() {}\n";
+        let p = parse_source(src, Lang::Rust).unwrap();
+        let got: Vec<_> = p.symbols.iter().map(|s| (s.qualified_name.as_str(), s.symbol_type.as_str())).collect();
+        assert!(got.contains(&("Trader", "struct")));
+        assert!(got.contains(&("Side", "enum")));
+        assert!(got.contains(&("Trader.new", "method")), "impl methods qualify to the type: {got:?}");
+        assert!(got.contains(&("Trader.buy", "method")));
+        assert!(got.contains(&("Exec", "trait")));
+        assert!(got.contains(&("main", "function")));
+        // The impl block itself is not emitted as a separate symbol.
+        assert!(!got.iter().any(|(_, t)| *t == "impl"));
+        assert!(p.imports.iter().any(|i| i.contains("std::collections")));
     }
 
     #[test]

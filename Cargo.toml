@@ -42,6 +42,7 @@ tree-sitter-typescript = "0.23"
 regex = "1.12.3"
 pdf-extract = "0.10.0"
 zip = "4.2.0"
+tree-sitter-rust = "0.24.2"
 
 [profile.release]
 # Small, fast-starting binary — startup latency matters because hooks fire
