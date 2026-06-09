@@ -149,11 +149,14 @@ pub fn fts_query(raw: &str) -> Option<String> {
 }
 
 /// FTS5/BM25 search over active memories in one store. Results are ordered
-/// deterministically by `(rank, id)` (PRD §9.1, §13.1). `scope` optionally restricts.
+/// deterministically by `(rank, id)` (PRD §9.1, §13.1). `scope` optionally restricts;
+/// `branch` is the current branch — `branch`-scoped memories are visible only on their
+/// own branch (PRD §8.11). Pass `None` for `branch` to hide all branch-scoped memories.
 pub fn search(
     conn: &Connection,
     match_expr: &str,
     scope: Option<Scope>,
+    branch: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Hit>> {
     let sql = "SELECT m.id, m.type, m.scope, m.title, m.content, m.importance,
@@ -163,13 +166,14 @@ pub fn search(
                WHERE memory_fts MATCH ?1
                  AND m.status = 'active'
                  AND (?2 IS NULL OR m.scope = ?2)
+                 AND (m.scope != 'branch' OR m.branch = ?3)
                ORDER BY rank, m.id
-               LIMIT ?3";
+               LIMIT ?4";
     let mut stmt = conn.prepare(sql)?;
     let scope_str = scope.map(|s| s.as_str());
     let rows = stmt
         .query_map(
-            rusqlite::params![match_expr, scope_str, limit as i64],
+            rusqlite::params![match_expr, scope_str, branch.unwrap_or(""), limit as i64],
             map_hit,
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -182,6 +186,7 @@ pub fn by_types(
     conn: &Connection,
     types: &[MemType],
     scope: Option<Scope>,
+    branch: Option<&str>,
     limit: usize,
 ) -> Result<Vec<MemoryRow>> {
     if types.is_empty() {
@@ -192,10 +197,12 @@ pub fn by_types(
         Some(_) => "AND scope = ?",
         None => "",
     };
+    // branch-scoped memories are visible only on their own branch (§8.11).
     let sql = format!(
         "SELECT id, type, scope, title, content, importance, status, updated_at
          FROM memory_items
          WHERE status = 'active' AND type IN ({placeholders}) {scope_clause}
+           AND (scope != 'branch' OR branch = ?)
          ORDER BY updated_at DESC, id DESC
          LIMIT ?"
     );
@@ -207,6 +214,7 @@ pub fn by_types(
     if let Some(s) = scope {
         params.push(Box::new(s.as_str()));
     }
+    params.push(Box::new(branch.unwrap_or("").to_string()));
     params.push(Box::new(limit as i64));
     let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
     let rows = stmt
@@ -282,7 +290,7 @@ mod tests {
             branch: None,
         }).unwrap();
         let q = fts_query("portable daemon").unwrap();
-        let hits = search(&conn, &q, None, 10).unwrap();
+        let hits = search(&conn, &q, None, None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].row.title, "Storage is one SQLite file");
     }
@@ -301,8 +309,24 @@ mod tests {
                 confidence: 1.0, branch: None,
             }).unwrap();
         }
-        let risks = by_types(&conn, &[MemType::Warning, MemType::Bug], None, 10).unwrap();
+        let risks = by_types(&conn, &[MemType::Warning, MemType::Bug], None, None, 10).unwrap();
         assert_eq!(risks.len(), 1);
         assert_eq!(risks[0].title, "a risk");
+    }
+
+    #[test]
+    fn branch_scoped_memory_is_only_visible_on_its_branch() {
+        let conn = store();
+        insert(&conn, &NewMemory {
+            mem_type: MemType::Decision, scope: Scope::Branch,
+            title: "feature flag rollout plan".into(), content: "ship behind a flag".into(),
+            importance: Importance::Normal, confidence: 1.0, branch: Some("feature".into()),
+        }).unwrap();
+        let q = fts_query("flag rollout").unwrap();
+
+        // Visible on its own branch, hidden on another branch / detached.
+        assert_eq!(search(&conn, &q, None, Some("feature"), 10).unwrap().len(), 1);
+        assert_eq!(search(&conn, &q, None, Some("main"), 10).unwrap().len(), 0);
+        assert_eq!(search(&conn, &q, None, None, 10).unwrap().len(), 0);
     }
 }

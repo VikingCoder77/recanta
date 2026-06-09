@@ -77,8 +77,9 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
     if args.scope != Some(Scope::User) {
         if let Ok(paths) = Paths::discover(project_override) {
             let conn = db::open_existing(&paths.db)?;
+            let branch = crate::git::current_branch(&paths.root);
             let filter = args.scope.filter(|s| *s != Scope::User);
-            results.extend(memory::search(&conn, &match_expr, filter, FETCH_LIMIT)?.into_iter().map(Match::Memory));
+            results.extend(memory::search(&conn, &match_expr, filter, branch.as_deref(), FETCH_LIMIT)?.into_iter().map(Match::Memory));
             // Documents and session transcripts have no scope; include them only on an
             // unrestricted search.
             if args.scope.is_none() {
@@ -94,7 +95,7 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
         if path.is_file() {
             let conn = db::open_existing(&path)?;
             results.extend(
-                memory::search(&conn, &match_expr, Some(Scope::User), FETCH_LIMIT)?
+                memory::search(&conn, &match_expr, Some(Scope::User), None, FETCH_LIMIT)?
                     .into_iter()
                     .map(Match::Memory),
             );

@@ -34,20 +34,22 @@ pub fn run(args: BriefArgs, project_override: Option<&Path>) -> Result<()> {
     // Blocks are emitted in this order; `output::pack` keeps as many as fit, so the
     // most important context (header, task) must come first.
     let mut blocks: Vec<String> = Vec::new();
+    let branch = git::current_branch(&paths.root);
+    let branch = branch.as_deref();
 
     blocks.push(header(&cfg, &paths.root));
-    blocks.push(active_task(&conn)?);
+    blocks.push(active_task(&conn, branch)?);
 
-    let risks = section(&conn, &[MemType::Warning, MemType::Bug], "risk", 3)?;
+    let risks = section(&conn, &[MemType::Warning, MemType::Bug], "risk", 3, branch)?;
     blocks.extend(risks);
 
-    let decisions = section(&conn, &[MemType::Decision], "decision", 3)?;
+    let decisions = section(&conn, &[MemType::Decision], "decision", 3, branch)?;
     blocks.extend(decisions);
 
     blocks.extend(user_prefs()?);
 
     if let Some(task) = &args.task {
-        blocks.extend(relevant(&conn, task)?);
+        blocks.extend(relevant(&conn, task, branch)?);
     }
 
     println!("{}", output::pack(blocks, args.budget));
@@ -71,8 +73,8 @@ fn header(cfg: &Config, root: &Path) -> String {
     }
 }
 
-fn active_task(conn: &Connection) -> Result<String> {
-    let tasks = memory::by_types(conn, &[MemType::Task], None, 1)?;
+fn active_task(conn: &Connection, branch: Option<&str>) -> Result<String> {
+    let tasks = memory::by_types(conn, &[MemType::Task], None, branch, 1)?;
     Ok(match tasks.first() {
         Some(t) => format!("task: {} (#{})", t.title, t.id),
         None => "task: none".to_string(),
@@ -85,8 +87,9 @@ fn section(
     types: &[MemType],
     label: &str,
     limit: usize,
+    branch: Option<&str>,
 ) -> Result<Vec<String>> {
-    Ok(memory::by_types(conn, types, None, limit)?
+    Ok(memory::by_types(conn, types, None, branch, limit)?
         .into_iter()
         .map(|m| format!("{label}: {} (#{})", m.title, m.id))
         .collect())
@@ -106,11 +109,11 @@ fn user_prefs() -> Result<Vec<String>> {
 }
 
 /// Memories relevant to a `--task` focus, via FTS.
-fn relevant(conn: &Connection, task: &str) -> Result<Vec<String>> {
+fn relevant(conn: &Connection, task: &str, branch: Option<&str>) -> Result<Vec<String>> {
     let Some(expr) = memory::fts_query(task) else {
         return Ok(vec![]);
     };
-    Ok(memory::search(conn, &expr, None, 3)?
+    Ok(memory::search(conn, &expr, None, branch, 3)?
         .into_iter()
         .map(|h| format!("relevant: {} (#{})", h.row.title, h.row.id))
         .collect())
