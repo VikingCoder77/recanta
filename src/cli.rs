@@ -63,6 +63,9 @@ pub enum Command {
     /// (Re)build the code graph index.
     Index(commands::index::IndexArgs),
 
+    /// Show changed files and the indexed symbols they touch.
+    Changed(commands::changed::ChangedArgs),
+
     /// Ingest documents (Markdown/text/PDF/Word/.doc) into project memory.
     Ingest(commands::ingest::IngestArgs),
 
@@ -98,6 +101,7 @@ impl Cli {
             Command::Uninstall(args) => crate::install::uninstall(args, project),
             Command::Inspect(args) => commands::inspect::run(args, project),
             Command::Index(args) => commands::index::run(args, project),
+            Command::Changed(args) => commands::changed::run(args, project),
             Command::Ingest(args) => commands::ingest::run(args, project),
             Command::ImportSessions(args) => commands::import_sessions::run(args, project),
             Command::Capture(args) => commands::capture::run(args, project),

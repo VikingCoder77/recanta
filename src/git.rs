@@ -98,6 +98,26 @@ pub fn commit_meta(dir: &Path, sha: &str) -> Option<CommitMeta> {
     Some(CommitMeta { sha, parents, author_email, subject, timestamp })
 }
 
+/// File paths from `git diff --name-only <args...>` (relative to the repo root).
+/// E.g. `diff_names(dir, &["abc123", "HEAD"])` for commits, or `&["HEAD"]` for the
+/// working tree. Returns an empty vec on any error.
+pub fn diff_names(dir: &Path, args: &[&str]) -> Vec<String> {
+    let mut full = vec!["diff", "--name-only"];
+    full.extend_from_slice(args);
+    match git(dir, &full) {
+        Some(out) => out.lines().map(|l| l.to_string()).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Untracked, non-ignored files (`git ls-files --others --exclude-standard`).
+pub fn untracked(dir: &Path) -> Vec<String> {
+    match git(dir, &["ls-files", "--others", "--exclude-standard"]) {
+        Some(out) => out.lines().map(|l| l.to_string()).collect(),
+        None => Vec::new(),
+    }
+}
+
 /// Files changed by a commit (vs its first parent; all files for a root commit, via
 /// `--root`).
 pub fn changed_files(dir: &Path, sha: &str) -> Vec<String> {

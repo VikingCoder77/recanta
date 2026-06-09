@@ -165,46 +165,7 @@ pub fn index_repo(
         };
         let Ok(src) = std::fs::read_to_string(abs) else { continue };
         let Some(parse) = parse_source(&src, lang) else { continue };
-
-        let filename = abs.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let line_count = src.lines().count() as i64;
-        let module_id = upsert(
-            &tx, repo_id, &rel, "module", &filename, &rel, "", 1, line_count.max(1),
-            &hash::sha256_hex(&src), head, &mut existing, &mut seen,
-        )?;
-
-        // Insert symbols, remembering local qualified_name -> id for DEFINES parents.
-        let mut local: HashMap<String, i64> = HashMap::new();
-        for s in &parse.symbols {
-            let id = upsert(
-                &tx, repo_id, &rel, &s.symbol_type, &s.name, &s.qualified_name,
-                &s.signature, s.start_line, s.end_line, &s.body_hash, head,
-                &mut existing, &mut seen,
-            )?;
-            local.insert(s.qualified_name.clone(), id);
-            stats.symbols += 1;
-        }
-        for s in &parse.symbols {
-            let parent = parent_qualified(&s.qualified_name)
-                .and_then(|p| local.get(p).copied())
-                .unwrap_or(module_id);
-            let child = local[&s.qualified_name];
-            insert_edge(&tx, parent, Some(child), "DEFINES")?;
-        }
-
-        // Imports: a per-file `import` symbol target + an IMPORTS edge from the module.
-        let mut seen_imports: HashSet<String> = HashSet::new();
-        for target in &parse.imports {
-            if !seen_imports.insert(target.clone()) {
-                continue;
-            }
-            let imp_id = upsert(
-                &tx, repo_id, &rel, "import", target, target, "", 0, 0, target, head,
-                &mut existing, &mut seen,
-            )?;
-            insert_edge(&tx, module_id, Some(imp_id), "IMPORTS")?;
-            stats.imports += 1;
-        }
+        reindex_file(&tx, repo_id, &rel, abs, &src, &parse, head, &mut existing, &mut seen, &mut stats)?;
         stats.files += 1;
     }
 
@@ -221,6 +182,116 @@ pub fn index_repo(
     }
     tx.commit()?;
     Ok(stats)
+}
+
+/// Incrementally reindex only the given files (relative paths), e.g. after a Git event.
+/// Each file's symbols and edges are rebuilt in place; symbols no longer present in a
+/// file are marked deleted; files that no longer exist have all their symbols deleted.
+/// Falls back to nothing if `changed` is empty. Updates `indexed_commit`.
+pub fn index_changed(
+    conn: &Connection,
+    repo_id: i64,
+    root: &Path,
+    changed: &[String],
+    head: Option<&str>,
+) -> Result<IndexStats> {
+    let tx = conn.unchecked_transaction()?;
+    let mut stats = IndexStats::default();
+
+    for rel in changed {
+        let abs = root.join(rel);
+        // Existing active symbols for just this file.
+        let mut existing: HashMap<(String, String), i64> = HashMap::new();
+        {
+            let mut stmt = tx.prepare(
+                "SELECT id, file_path, qualified_name FROM code_symbols
+                 WHERE repo_id = ?1 AND file_path = ?2 AND status = 'active'",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![repo_id, rel], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            })?;
+            for row in rows {
+                let (id, file, q) = row?;
+                existing.insert((file, q), id);
+            }
+        }
+        // Clear this file's outgoing edges; we rebuild them below.
+        tx.execute(
+            "DELETE FROM code_relationships WHERE from_symbol_id IN
+                (SELECT id FROM code_symbols WHERE repo_id = ?1 AND file_path = ?2)",
+            rusqlite::params![repo_id, rel],
+        )?;
+
+        let mut seen: HashSet<i64> = HashSet::new();
+        let lang = abs.extension().and_then(|e| e.to_str()).and_then(Lang::from_extension);
+        if let (Some(lang), Ok(src)) = (lang, std::fs::read_to_string(&abs)) {
+            if let Some(parse) = parse_source(&src, lang) {
+                reindex_file(&tx, repo_id, rel, &abs, &src, &parse, head, &mut existing, &mut seen, &mut stats)?;
+                stats.files += 1;
+            }
+        }
+        // Anything previously active in this file but not seen is now deleted.
+        for ((_, _), id) in existing.iter() {
+            if !seen.contains(id) {
+                tx.execute("UPDATE code_symbols SET status = 'deleted' WHERE id = ?1", [id])?;
+                stats.deleted += 1;
+            }
+        }
+    }
+
+    if let Some(h) = head {
+        tx.execute("UPDATE repositories SET indexed_commit = ?1 WHERE id = ?2", rusqlite::params![h, repo_id])?;
+    }
+    tx.commit()?;
+    Ok(stats)
+}
+
+/// Upsert one file's module symbol, definitions, DEFINES edges, and IMPORTS.
+#[allow(clippy::too_many_arguments)]
+fn reindex_file(
+    tx: &Connection,
+    repo_id: i64,
+    rel: &str,
+    abs: &Path,
+    src: &str,
+    parse: &FileParse,
+    head: Option<&str>,
+    existing: &mut HashMap<(String, String), i64>,
+    seen: &mut HashSet<i64>,
+    stats: &mut IndexStats,
+) -> Result<()> {
+    let filename = abs.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let line_count = src.lines().count() as i64;
+    let module_id = upsert(
+        tx, repo_id, rel, "module", &filename, rel, "", 1, line_count.max(1),
+        &hash::sha256_hex(src), head, existing, seen,
+    )?;
+
+    let mut local: HashMap<String, i64> = HashMap::new();
+    for s in &parse.symbols {
+        let id = upsert(
+            tx, repo_id, rel, &s.symbol_type, &s.name, &s.qualified_name, &s.signature,
+            s.start_line, s.end_line, &s.body_hash, head, existing, seen,
+        )?;
+        local.insert(s.qualified_name.clone(), id);
+        stats.symbols += 1;
+    }
+    for s in &parse.symbols {
+        let parent = parent_qualified(&s.qualified_name)
+            .and_then(|p| local.get(p).copied())
+            .unwrap_or(module_id);
+        insert_edge(tx, parent, Some(local[&s.qualified_name]), "DEFINES")?;
+    }
+    let mut seen_imports: HashSet<String> = HashSet::new();
+    for target in &parse.imports {
+        if !seen_imports.insert(target.clone()) {
+            continue;
+        }
+        let imp_id = upsert(tx, repo_id, rel, "import", target, target, "", 0, 0, target, head, existing, seen)?;
+        insert_edge(tx, module_id, Some(imp_id), "IMPORTS")?;
+        stats.imports += 1;
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
