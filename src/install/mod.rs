@@ -5,7 +5,11 @@
 
 pub mod managed;
 mod claude;
+mod codex;
+mod gemini;
 mod git_hook;
+mod json_hooks;
+mod opencode;
 
 use std::path::{Path, PathBuf};
 
@@ -86,9 +90,12 @@ pub fn run(args: InstallArgs, project_override: Option<&Path>) -> Result<()> {
         match harness {
             "git" => plan.extend(git_hook::plan(root)),
             "claude-code" => plan.extend(claude::plan(root)?),
-            other => plan
-                .warnings
-                .push(format!("unknown harness `{other}` (v0.1: git, claude-code)")),
+            "codex" => plan.extend(codex::plan(root)?),
+            "gemini" => plan.extend(gemini::plan(root)?),
+            "opencode" => plan.extend(opencode::plan(root)?),
+            other => plan.warnings.push(format!(
+                "unknown harness `{other}` (git, claude-code, codex, gemini, opencode)"
+            )),
         }
     }
 
@@ -172,10 +179,29 @@ pub fn uninstall(args: UninstallArgs, project_override: Option<&Path>) -> Result
             println!("  - {} (file gone, skipping)", row.file_path.display());
             continue;
         };
-        let new_content = if row.harness == "claude-code" {
-            claude::strip(&text)?
-        } else {
-            managed::remove_block(&text)
+
+        // OpenCode's plugin is a whole file we own — remove the file, not a block.
+        if row.harness == "opencode" {
+            if opencode::is_ours(&text) {
+                if args.dry_run {
+                    println!("  [remove] OpenCode plugin {}", row.file_path.display());
+                } else {
+                    managed::backup(&row.file_path, &paths.backups, &stamp)?;
+                    std::fs::remove_file(&row.file_path)
+                        .with_context(|| format!("removing {}", row.file_path.display()))?;
+                    conn.execute("UPDATE hook_installations SET status='removed' WHERE id=?1", [row.id])?;
+                    println!("  ✓ removed OpenCode plugin {}", row.file_path.display());
+                    removed += 1;
+                }
+            } else {
+                println!("  - {} (not a Recanta plugin)", row.file_path.display());
+            }
+            continue;
+        }
+
+        let new_content = match row.harness.as_str() {
+            "claude-code" | "codex" | "gemini" => json_hooks::strip(&text)?,
+            _ => managed::remove_block(&text), // git
         };
         match new_content {
             Some(content) => {
