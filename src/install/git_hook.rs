@@ -8,10 +8,32 @@ use crate::git;
 
 use super::{Action, Plan, Verb};
 
-/// The body of the managed block (inner lines only). Fail-open: never blocks a commit.
-const HOOK_BODY: &str = "if command -v recanta >/dev/null 2>&1; then\n  \
-    recanta record-commit --commit HEAD --project \"$(git rev-parse --show-toplevel)\" \
-    >/dev/null 2>&1 || true\nfi";
+/// The git hooks Recanta installs: (hook file, managed-block body). Bodies are
+/// fail-open (`|| true`) and never block the git operation.
+/// - `post-commit`  → record the commit.
+/// - `post-checkout`→ refresh the code graph after a branch switch (`$3==1`).
+/// - `post-merge`   → refresh the code graph after a merge/pull.
+const HOOKS: &[(&str, &str)] = &[
+    (
+        "post-commit",
+        "if command -v recanta >/dev/null 2>&1; then\n  \
+         ROOT=\"$(git rev-parse --show-toplevel)\"\n  \
+         recanta index --changed-only --project \"$ROOT\" >/dev/null 2>&1 || true\n  \
+         recanta record-commit --commit HEAD --project \"$ROOT\" >/dev/null 2>&1 || true\nfi",
+    ),
+    (
+        "post-checkout",
+        "if [ \"${3:-1}\" = \"1\" ] && command -v recanta >/dev/null 2>&1; then\n  \
+         recanta index --changed-only --project \"$(git rev-parse --show-toplevel)\" \
+         >/dev/null 2>&1 || true\nfi",
+    ),
+    (
+        "post-merge",
+        "if command -v recanta >/dev/null 2>&1; then\n  \
+         recanta index --changed-only --project \"$(git rev-parse --show-toplevel)\" \
+         >/dev/null 2>&1 || true\nfi",
+    ),
+];
 
 /// Where (and whether) we can safely write a `post-commit` hook.
 enum Mechanism {
@@ -61,44 +83,42 @@ pub fn plan(root: &Path) -> Plan {
     match detect(root) {
         Mechanism::Framework(name) => {
             plan.warnings.push(format!(
-                "git hooks are managed by `{name}`; add this line to your {name} \
-                 post-commit step instead of letting Recanta write .git/hooks:\n      \
-                 recanta record-commit --commit HEAD"
+                "git hooks are managed by `{name}`; add Recanta to your {name} \
+                 post-commit/post-checkout/post-merge steps instead of letting it write \
+                 .git/hooks (e.g. `recanta record-commit --commit HEAD`)."
             ));
         }
         Mechanism::Writable { dir, label } => {
-            let path = dir.join("post-commit");
-            let existing = std::fs::read_to_string(&path).unwrap_or_default();
-            if super::managed::has_block(&existing) {
-                plan.notes
-                    .push(format!("git post-commit already installed ({label})"));
-                return plan;
+            for (hook, body) in HOOKS {
+                let path = dir.join(hook);
+                let existing = std::fs::read_to_string(&path).unwrap_or_default();
+                if super::managed::has_block(&existing) {
+                    plan.notes.push(format!("git {hook} already installed ({label})"));
+                    continue;
+                }
+                let block = super::managed::upsert_block(&existing, body);
+                let new_content = if existing.trim().is_empty() {
+                    format!("#!/usr/bin/env bash\n{block}\n")
+                } else {
+                    block
+                };
+                let verb = if path.exists() { Verb::Update } else { Verb::Create };
+                let preview = match verb {
+                    Verb::Create => format!("create {} ({label})", path.display()),
+                    Verb::Update => format!("add managed block to {} ({label}, chained)", path.display()),
+                };
+                plan.actions.push(Action {
+                    harness: "git",
+                    mechanism: label.to_string(),
+                    path,
+                    verb,
+                    new_content,
+                    executable: true,
+                    block_id: format!("git-{hook}"),
+                    preview,
+                });
             }
-            let new_content = if existing.trim().is_empty() {
-                format!("#!/usr/bin/env bash\n{}\n", block(&existing))
-            } else {
-                block(&existing)
-            };
-            let verb = if path.exists() { Verb::Update } else { Verb::Create };
-            let preview = match verb {
-                Verb::Create => format!("create {} ({label})", path.display()),
-                Verb::Update => format!("add managed block to {} ({label}, chained)", path.display()),
-            };
-            plan.actions.push(Action {
-                harness: "git",
-                mechanism: label.to_string(),
-                path,
-                verb,
-                new_content,
-                executable: true,
-                block_id: "git-post-commit".to_string(),
-                preview,
-            });
         }
     }
     plan
-}
-
-fn block(existing: &str) -> String {
-    super::managed::upsert_block(existing, HOOK_BODY)
 }
