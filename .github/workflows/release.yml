@@ -78,6 +78,6 @@ jobs:
             ${{ matrix.name }}.zip
             ${{ matrix.name }}.zip.sha256
           body: |
-            Recanta v0.1.0 — a CLI-first, local-first memory substrate for AI agents.
+            Recanta — a CLI-first, local-first memory substrate for AI agents.
             Download the archive for your platform below; see CHANGELOG.md for details.
           fail_on_unmatched_files: false

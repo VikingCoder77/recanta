@@ -3,6 +3,37 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-06-13
+
+Git & multi-harness breadth, plus Rust support so Recanta can index itself.
+
+### Code graph
+- **Rust** added to the code graph (Python/JS/TS/Rust). Structs, enums, traits,
+  functions, methods, mods, and `use`/`extern crate` imports; `impl` blocks scope their
+  methods to the implementing type (e.g. `Trader.new`). Language rules are unified in a
+  single `classify` model.
+- `index --changed-only` — incremental reindex of the committed delta
+  (`indexed_commit..HEAD`); much faster than a full reindex after a Git event.
+- `changed` command — maps the working-tree diff (or `--against <ref>`) to the indexed
+  symbols each file touches, as a pre-commit/review risk surface.
+- `inspect class` now matches any type-like kind (class/interface/struct/enum/trait).
+
+### Git & harness hooks
+- The installer wires three git hooks: `post-commit` (reindex changed files, then
+  record the commit, so new symbols are immediately queryable), `post-checkout`, and
+  `post-merge` (reindex on branch switch / merge).
+- **Install adapters for Codex, Gemini CLI, and OpenCode** (in addition to Claude Code):
+  Codex/Gemini get JSON command-hooks (shared merge/marker logic), OpenCode gets a
+  `.opencode/plugin/recanta.ts` shim. Trust-folder and output caveats are surfaced.
+  (Best-effort: hook formats vary by tool version.)
+
+### Memory
+- **Branch-scope visibility**: a `branch`-scoped memory is shown only on its own branch.
+
+### Deferred
+- Merge-driven activation of a branch's memories onto the default branch (the post-merge
+  reindex is wired; merge→memory activation is a later refinement).
+
 ## [0.1.0] - 2026-06-07
 
 First release: a complete, local-first memory substrate for AI agents. Every command in
@@ -62,4 +93,5 @@ intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-o
 dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
 tasks are writable today via `remember --type`).
 
+[0.2.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.2.0
 [0.1.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.1.0
