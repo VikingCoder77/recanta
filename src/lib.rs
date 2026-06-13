@@ -15,6 +15,7 @@ pub mod commands;
 pub mod db;
 pub mod documents;
 pub mod eventlog;
+pub mod explorer;
 pub mod extract;
 pub mod git;
 pub mod graph;

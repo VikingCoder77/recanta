@@ -75,6 +75,9 @@ pub enum Command {
     /// Manage the capture policy (raw transcript capture; on by default).
     Capture(commands::capture::CaptureArgs),
 
+    /// Serve the local, read-only Explorer web UI.
+    Serve(commands::serve::ServeArgs),
+
     /// Apply pending SQLite schema migrations.
     Migrate(commands::migrate::MigrateArgs),
 }
@@ -105,6 +108,7 @@ impl Cli {
             Command::Ingest(args) => commands::ingest::run(args, project),
             Command::ImportSessions(args) => commands::import_sessions::run(args, project),
             Command::Capture(args) => commands::capture::run(args, project),
+            Command::Serve(args) => commands::serve::run(args, project),
             Command::Migrate(args) => commands::migrate::run(args, project),
         }
     }

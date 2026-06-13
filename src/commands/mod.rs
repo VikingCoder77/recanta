@@ -15,4 +15,5 @@ pub mod record_edit;
 pub mod record_event;
 pub mod remember;
 pub mod search;
+pub mod serve;
 pub mod status;

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recanta Explorer</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3140;
+    --fg:#e6edf3; --dim:#8b95a5; --accent:#5cc8ff; --accent2:#a371f7;
+    --green:#3fb950; --amber:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:15px;margin:0;letter-spacing:.5px}
+  header h1 b{color:var(--accent)}
+  #meta{color:var(--dim);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  #meta .k{color:var(--fg)}
+  .pill{padding:1px 7px;border:1px solid var(--line);border-radius:10px}
+  main{display:grid;grid-template-columns:minmax(340px,1fr) 1.4fr;height:calc(100vh - 49px)}
+  #left{border-right:1px solid var(--line);overflow:auto;padding:14px}
+  #right{overflow:auto;padding:16px;background:var(--panel)}
+  #q{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--fg);font:inherit}
+  #q:focus{outline:none;border-color:var(--accent)}
+  .group{margin-top:16px}
+  .group h2{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:0 0 6px}
+  .row{padding:7px 9px;border:1px solid transparent;border-radius:7px;cursor:pointer}
+  .row:hover{background:var(--panel2);border-color:var(--line)}
+  .row .t{color:var(--fg)}
+  .row .s{color:var(--dim);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tag{font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);color:var(--dim);margin-right:6px}
+  .tag.mem{color:var(--accent2);border-color:var(--accent2)}
+  .tag.doc{color:var(--green);border-color:var(--green)}
+  .tag.sess{color:var(--amber);border-color:var(--amber)}
+  .tag.sym{color:var(--accent);border-color:var(--accent)}
+  .empty{color:var(--dim);padding:30px 6px;text-align:center}
+  h3{margin:0 0 4px;font-size:15px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
+  pre{white-space:pre-wrap;word-break:break-word;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px;margin:8px 0}
+  .meta{color:var(--dim);font-size:12px;margin:12px 0 6px}
+  svg{width:100%;height:420px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .edge{stroke:var(--line);stroke-width:1.2}
+  .node circle{fill:var(--panel);stroke:var(--accent);stroke-width:1.5;cursor:pointer}
+  .node.focus circle{fill:#13314a;stroke-width:2.5}
+  .node text{fill:var(--fg);font-size:11px;cursor:pointer}
+  .node:hover circle{stroke:var(--accent2)}
+  ul.changes{margin:4px 0;padding-left:18px}
+  ul.changes li{color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1><b>Recanta</b> Explorer</h1>
+  <div id="meta">loading…</div>
+</header>
+<main>
+  <section id="left">
+    <input id="q" placeholder="Search memory, documents, chats, code…" autocomplete="off" autofocus>
+    <div id="results"></div>
+  </section>
+  <section id="right"><div id="detail"></div></section>
+</main>
+<script>
+// All dynamic content is built with DOM APIs + textContent (never innerHTML), so
+// ingested data (code, docs, transcripts) can never inject markup.
+const SVGNS = 'http://www.w3.org/2000/svg';
+const api = async p => (await fetch(p)).json();
+
+function el(tag, opts={}, kids=[]){
+  const n = document.createElement(tag);
+  if(opts.class) n.className = opts.class;
+  if(opts.text != null) n.textContent = opts.text;
+  if(opts.onClick) n.addEventListener('click', opts.onClick);
+  for(const k of kids) if(k) n.appendChild(k);
+  return n;
+}
+function svg(tag, attrs={}){
+  const n = document.createElementNS(SVGNS, tag);
+  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+function clear(node){ while(node.firstChild) node.removeChild(node.firstChild); }
+function setEmpty(node, msg){ clear(node); node.appendChild(el('div',{class:'empty',text:msg})); }
+
+const results = document.getElementById('results');
+const detail = document.getElementById('detail');
+setEmpty(results, 'Type to search, or pick a symbol.');
+setEmpty(detail, 'Select a result to inspect it.');
+
+async function loadStatus(){
+  const meta = document.getElementById('meta');
+  try{
+    const s = await api('/api/status'); const c = s.counts||{};
+    clear(meta);
+    meta.appendChild(el('span',{class:'k',text:s.project||'project'}));
+    if(s.branch) meta.appendChild(el('span',{class:'pill',text:`${s.branch}@${s.head||''} ${s.dirty?'dirty':'clean'}`}));
+    meta.appendChild(el('span',{text:`index ${s.index}`}));
+    meta.appendChild(el('span',{text:`${c.memory} memory · ${c.symbols} symbols · ${c.documents} docs · ${c.sessions} chats`}));
+  }catch(e){ meta.textContent='no project (run recanta init)'; }
+}
+
+let timer;
+document.getElementById('q').addEventListener('input', e=>{ clearTimeout(timer); timer=setTimeout(()=>doSearch(e.target.value), 160); });
+
+function row(tag, title, sub, onClick){
+  const t = el('div',{class:'t'}, [el('span',{class:'tag '+tag, text:tag}), document.createTextNode(title)]);
+  return el('div',{class:'row', onClick}, [t, el('div',{class:'s', text:sub})]);
+}
+function group(title, items, make){
+  if(!items || !items.length) return null;
+  const g = el('div',{class:'group'}, [el('h2',{text:`${title} (${items.length})`})]);
+  for(const it of items) g.appendChild(make(it));
+  return g;
+}
+
+async function doSearch(q){
+  if(!q.trim()){ setEmpty(results,'Type to search, or pick a symbol.'); return; }
+  const r = await api('/api/search?q='+encodeURIComponent(q));
+  clear(results);
+  const groups = [
+    group('Code', r.symbols, x=>row('sym', x.qualified_name, `${x.type} · ${x.file}:${x.line}`, ()=>openSymbol(x.id))),
+    group('Memory', r.memory, x=>row('mem', x.title, `${x.scope}/${x.type} · ${x.snippet}`, ()=>openMemory(x.id))),
+    group('Documents', r.documents, x=>row('doc', x.title, x.path, ()=>openText(x.title, x.snippet))),
+    group('Chats', r.sessions, x=>row('sess', 'session '+(x.started_at||''), x.snippet, ()=>openText('chat', x.snippet))),
+  ].filter(Boolean);
+  if(!groups.length){ setEmpty(results,'No matches.'); return; }
+  for(const g of groups) results.appendChild(g);
+}
+
+async function openSymbol(id){
+  const [d, g] = await Promise.all([api('/api/symbol?id='+id), api('/api/graph?focus='+id)]);
+  clear(detail);
+  detail.appendChild(el('h3',{text:d.qualified_name||'symbol'}));
+  detail.appendChild(el('div',{class:'sub',text:`${d.type} · ${d.file}:${d.start}-${d.end}`}));
+  if(d.signature) detail.appendChild(el('pre',{text:d.signature}));
+  if(d.changes && d.changes.length){
+    detail.appendChild(el('div',{class:'meta',text:'recent changes'}));
+    const ul = el('ul',{class:'changes'});
+    for(const c of d.changes) ul.appendChild(el('li',{text:`${c.change}${c.commit?(' @'+String(c.commit).slice(0,8)):''}`}));
+    detail.appendChild(ul);
+  }
+  detail.appendChild(el('div',{class:'meta',text:'neighborhood (DEFINES / IMPORTS / CHANGED_BY)'}));
+  detail.appendChild(renderGraph(g));
+}
+
+function renderGraph(g){
+  const W=600,H=420,cx=W/2,cy=H/2,R=150;
+  const s = svg('svg',{viewBox:`0 0 ${W} ${H}`});
+  if(!g.nodes || !g.nodes.length){ s.appendChild(svg('text',{x:cx,y:cy,fill:'#8b95a5'})).textContent='no relationships'; return s; }
+  const others = g.nodes.filter(n=>n.id!==g.focus), pos={};
+  pos[g.focus]=[cx,cy];
+  others.forEach((n,i)=>{ const a=(i/Math.max(others.length,1))*2*Math.PI - Math.PI/2; pos[n.id]=[cx+R*Math.cos(a), cy+R*Math.sin(a)]; });
+  for(const e of (g.edges||[])){ if(!pos[e.from]||!pos[e.to]) continue;
+    s.appendChild(svg('line',{class:'edge', x1:pos[e.from][0], y1:pos[e.from][1], x2:pos[e.to][0], y2:pos[e.to][1]})); }
+  for(const n of g.nodes){ const [x,y]=pos[n.id], focus=n.id===g.focus;
+    const grp = svg('g',{class:'node'+(focus?' focus':'')}); grp.addEventListener('click', ()=>openSymbol(n.id));
+    grp.appendChild(svg('circle',{cx:x, cy:y, r:focus?9:6}));
+    const tx = svg('text',{x:x+11, y:y+4}); tx.textContent = String(n.label||'').split('.').pop()+'  '+n.type;
+    grp.appendChild(tx); s.appendChild(grp);
+  }
+  return s;
+}
+
+async function openMemory(id){
+  const m = await api('/api/memory?id='+id);
+  clear(detail);
+  detail.appendChild(el('h3',{text:m.title||'memory'}));
+  detail.appendChild(el('div',{class:'sub',text:`${m.scope}/${m.type} · ${m.status} · importance ${m.importance} · ${m.created_at}`}));
+  detail.appendChild(el('pre',{text:m.content||''}));
+  if(m.source_commits && m.source_commits!=='null') detail.appendChild(el('div',{class:'meta',text:'evidence commits: '+m.source_commits}));
+}
+
+function openText(title, body){
+  clear(detail);
+  detail.appendChild(el('h3',{text:title}));
+  detail.appendChild(el('pre',{text:body||''}));
+}
+
+loadStatus();
+</script>
+</body>
+</html>

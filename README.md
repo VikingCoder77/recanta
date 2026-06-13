@@ -86,6 +86,8 @@ recanta status               # project, branch, index/capture state, DB size
 | `import-sessions` | Import agent transcripts (Claude Code, Codex, Gemini, OpenCode) |
 | `record-commit` / `record-edit` / `record-event` | Hook targets that record activity |
 | `capture` | Manage raw-transcript capture (on by default, redacted) |
+| `serve` | Local, read-only **Explorer** web UI (search + code-graph view) |
+| `changed` | Show changed files and the symbols they touch |
 | `status` / `migrate` | Health/identity report; apply schema migrations |
 
 Every query command takes `--budget <chars>` and `--format compact|json|ids-only`.
@@ -118,9 +120,10 @@ Shipped in v0.1: the CLI core, SQLite/FTS5 store, redaction, the non-destructive
 installer (Git + Claude Code), the tree-sitter code graph, document ingestion, and
 multi-harness session import.
 
-Next: the local **Explorer** graph UI (`serve`), local **embeddings/vector** search
-(`sqlite-vec` + `fastembed`), a thin **MCP** bridge, retention/`gc`, blast-radius code
-intelligence, and more harness hooks. See `CHANGELOG.md` for details.
+The local **Explorer** (`recanta serve`) ships a read-only graph + search UI from the
+binary (no Node build, no CDN). Next: local **embeddings/vector** search (`sqlite-vec` +
+`fastembed`), a thin **MCP** bridge, retention/`gc`, and blast-radius code intelligence.
+See `CHANGELOG.md` for details.
 
 ## License
 
