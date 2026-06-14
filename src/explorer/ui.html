@@ -156,7 +156,10 @@ function renderGraph(g){
   for(const n of g.nodes){ const [x,y]=pos[n.id], focus=n.id===g.focus;
     const grp = svg('g',{class:'node'+(focus?' focus':'')}); grp.addEventListener('click', ()=>openSymbol(n.id));
     grp.appendChild(svg('circle',{cx:x, cy:y, r:focus?9:6}));
-    const tx = svg('text',{x:x+11, y:y+4}); tx.textContent = String(n.label||'').split('.').pop()+'  '+n.type;
+    // Modules are file paths (shorten by '/'); code symbols are dotted names (by '.').
+    const lbl = String(n.label||'');
+    const short = n.type==='module' ? lbl.split('/').pop() : lbl.split('.').pop();
+    const tx = svg('text',{x:x+11, y:y+4}); tx.textContent = short+'  '+n.type;
     grp.appendChild(tx); s.appendChild(grp);
   }
   return s;
