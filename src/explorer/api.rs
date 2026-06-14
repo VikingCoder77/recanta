@@ -155,6 +155,232 @@ pub fn graph(conn: &Connection, focus: &str) -> Result<String> {
     Ok(json!({"focus": focus_id, "nodes": nodes, "edges": edges}).to_string())
 }
 
+/// `/api/graph/full` — the whole knowledge graph: code symbols + modules, documents,
+/// memories, sessions, commits, and the relationships between them (DEFINES, resolved
+/// internal IMPORTS, CHANGED_BY, memory→evidence, document→code, document↔document).
+pub fn full_graph(conn: &Connection, repo_id: Option<i64>) -> Result<String> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut edges: Vec<Value> = Vec::new();
+    // Node ids are type-prefixed so id-spaces never collide.
+    let sid = |id: i64| format!("sym:{id}");
+    let cid = |sha: &str| format!("com:{sha}");
+
+    // --- Code symbols (modules + defs; import nodes are excluded, resolved below) ---
+    let repo = repo_id.unwrap_or(-1);
+    let mut module_stem: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut symbol_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, qualified_name, symbol_type, file_path FROM code_symbols
+             WHERE repo_id=?1 AND status='active' AND symbol_type != 'import' LIMIT 3000",
+        )?;
+        let rows = stmt.query_map([repo], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+        })?;
+        for row in rows {
+            let (id, qn, ty, file) = row?;
+            symbol_ids.insert(id);
+            if ty == "module" {
+                if let Some(stem) = std::path::Path::new(&file).file_stem().and_then(|s| s.to_str()) {
+                    module_stem.insert(stem.to_string(), id);
+                }
+            }
+            let label = if ty == "module" { file.rsplit('/').next().unwrap_or(&file).to_string() } else { qn.rsplit('.').next().unwrap_or(&qn).to_string() };
+            nodes.push(json!({"id": sid(id), "label": label, "kind": ty, "group": file, "ref": id}));
+        }
+    }
+
+    // --- DEFINES (and any non-IMPORTS) edges between included symbols ---
+    {
+        let mut stmt = conn.prepare(
+            "SELECT from_symbol_id, to_symbol_id, relationship_type FROM code_relationships
+             WHERE relationship_type != 'IMPORTS'",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, String>(2)?))
+        })?;
+        for row in rows {
+            let (from, to, rel) = row?;
+            if let Some(to) = to {
+                if symbol_ids.contains(&from) && symbol_ids.contains(&to) {
+                    edges.push(json!({"source": sid(from), "target": sid(to), "rel": rel}));
+                }
+            }
+        }
+    }
+
+    // --- IMPORTS resolved to internal modules (file dependency graph) ---
+    {
+        let mut stmt = conn.prepare(
+            "SELECT r.from_symbol_id, imp.qualified_name FROM code_relationships r
+             JOIN code_symbols imp ON imp.id = r.to_symbol_id
+             WHERE r.relationship_type='IMPORTS' AND imp.symbol_type='import'",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut seen = std::collections::HashSet::new();
+        for row in rows {
+            let (module_id, target) = row?;
+            // Try each path segment of the import target against internal module stems.
+            for seg in target.split([':', '/', '.']).filter(|s| !s.is_empty()) {
+                if let Some(&dst) = module_stem.get(seg) {
+                    if dst != module_id && seen.insert((module_id, dst)) {
+                        edges.push(json!({"source": sid(module_id), "target": sid(dst), "rel": "IMPORTS"}));
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Commits (recent) ---
+    let mut commit_shas: std::collections::HashSet<String> = std::collections::HashSet::new();
+    {
+        let mut stmt = conn.prepare("SELECT sha, message FROM commits ORDER BY timestamp DESC LIMIT 150")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?;
+        for row in rows {
+            let (sha, msg) = row?;
+            commit_shas.insert(sha.clone());
+            let label = msg.unwrap_or_default().lines().next().unwrap_or("").chars().take(32).collect::<String>();
+            nodes.push(json!({"id": cid(&sha), "label": format!("{} {}", &sha[..sha.len().min(7)], label), "kind": "commit"}));
+        }
+    }
+    // CHANGED_BY: symbol → commit
+    {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT symbol_id, commit_sha FROM symbol_changes WHERE commit_sha IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (sym, sha) = row?;
+            if symbol_ids.contains(&sym) && commit_shas.contains(&sha) {
+                edges.push(json!({"source": sid(sym), "target": cid(&sha), "rel": "CHANGED_BY"}));
+            }
+        }
+    }
+
+    // --- Memories (+ evidence → commit) ---
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, type, scope, source_commit_shas FROM memory_items WHERE status='active' LIMIT 2000",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?))
+        })?;
+        for row in rows {
+            let (id, title, ty, scope, commits) = row?;
+            nodes.push(json!({"id": format!("mem:{id}"), "label": title.chars().take(40).collect::<String>(), "kind": "memory", "memtype": ty, "scope": scope, "ref": id}));
+            if let Some(js) = commits {
+                if let Ok(Value::Array(arr)) = serde_json::from_str::<Value>(&js) {
+                    for sha in arr.iter().filter_map(|v| v.as_str()) {
+                        if commit_shas.contains(sha) {
+                            edges.push(json!({"source": format!("mem:{id}"), "target": cid(sha), "rel": "EVIDENCE"}));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Documents + sessions, with document→code mentions and document↔document links ---
+    add_documents(conn, repo, &module_stem, &mut nodes, &mut edges)?;
+    {
+        let mut stmt = conn.prepare("SELECT id, started_at FROM sessions LIMIT 500")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?;
+        for row in rows {
+            let (id, started) = row?;
+            nodes.push(json!({"id": format!("ses:{id}"), "label": format!("session {}", started.as_deref().map(|s| s.split('T').next().unwrap_or(s)).unwrap_or("")), "kind": "session", "ref": id}));
+        }
+    }
+
+    Ok(json!({"nodes": nodes, "edges": edges}).to_string())
+}
+
+/// Documents as nodes, linked to the code they mention (MENTIONS) and to other documents
+/// they're topically similar to (RELATED, by shared significant terms — a lightweight
+/// "related documents" without embeddings).
+fn add_documents(
+    conn: &Connection,
+    repo: i64,
+    _module_stem: &std::collections::HashMap<String, i64>,
+    nodes: &mut Vec<Value>,
+    edges: &mut Vec<Value>,
+) -> Result<()> {
+    use std::collections::{HashMap, HashSet};
+
+    // Code tokens to look for in document text: file paths (specific), qualified method
+    // names, and identifier names of length >= 5 (so prose like "redaction" matches the
+    // `redact` symbol). Keyed token -> a representative symbol id.
+    let mut tokens: HashMap<String, i64> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, qualified_name, symbol_type, file_path FROM code_symbols
+             WHERE repo_id=?1 AND status='active' AND symbol_type != 'import' LIMIT 4000",
+        )?;
+        let rows = stmt.query_map([repo], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))
+        })?;
+        for row in rows {
+            let (id, name, qn, ty, file) = row?;
+            if ty == "module" {
+                tokens.entry(file).or_insert(id);
+            } else {
+                if qn.contains('.') {
+                    tokens.entry(qn).or_insert(id);
+                }
+                if name.len() >= 5 {
+                    tokens.entry(name).or_insert(id);
+                }
+            }
+        }
+    }
+
+    let mut doc_terms: Vec<(i64, HashSet<String>)> = Vec::new();
+    let mut stmt = conn.prepare("SELECT id, title, content FROM documents WHERE status='active' LIMIT 400")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+    })?;
+    for row in rows {
+        let (id, title, content) = row?;
+        nodes.push(json!({"id": format!("doc:{id}"), "label": title, "kind": "document", "ref": id}));
+        let mut mentioned = HashSet::new();
+        for (tok, sym) in &tokens {
+            if content.contains(tok.as_str()) {
+                mentioned.insert(*sym);
+            }
+        }
+        for sym in &mentioned {
+            edges.push(json!({"source": format!("doc:{id}"), "target": format!("sym:{sym}"), "rel": "MENTIONS"}));
+        }
+        doc_terms.push((id, significant_terms(&content)));
+    }
+
+    // Document ↔ document: related if they share enough significant terms (Jaccard).
+    for i in 0..doc_terms.len() {
+        for j in (i + 1)..doc_terms.len() {
+            let shared = doc_terms[i].1.intersection(&doc_terms[j].1).count();
+            let union = doc_terms[i].1.union(&doc_terms[j].1).count().max(1);
+            if shared >= 6 && (shared as f64 / union as f64) >= 0.08 {
+                edges.push(json!({"source": format!("doc:{}", doc_terms[i].0), "target": format!("doc:{}", doc_terms[j].0), "rel": "RELATED"}));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Distinctive lowercase terms in a document (length 5..=24, alphabetic, minus common
+/// stopwords), for lightweight document-similarity.
+fn significant_terms(content: &str) -> std::collections::HashSet<String> {
+    const STOP: &[&str] = &[
+        "which", "there", "their", "would", "about", "these", "those", "where", "while",
+        "could", "should", "every", "other", "after", "before", "being", "below", "above",
+        "between", "because", "through", "without", "within", "across", "into", "with",
+    ];
+    content
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.to_lowercase())
+        .filter(|w| (5..=24).contains(&w.len()) && w.chars().all(|c| c.is_alphabetic()) && !STOP.contains(&w.as_str()))
+        .collect()
+}
+
 /// `/api/symbol?id=` — symbol detail + recent changes.
 pub fn symbol(conn: &Connection, id: &str) -> Result<String> {
     let Ok(id) = id.parse::<i64>() else {

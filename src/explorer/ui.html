@@ -4,49 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Recanta Explorer</title>
+<script src="/vendor/cytoscape.min.js"></script>
 <style>
   :root{
     --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3140;
     --fg:#e6edf3; --dim:#8b95a5; --accent:#5cc8ff; --accent2:#a371f7;
-    --green:#3fb950; --amber:#d29922;
+    --green:#3fb950; --amber:#d29922; --teal:#56d4c4; --pink:#f778ba; --gray:#8b95a5;
   }
   *{box-sizing:border-box}
-  body{margin:0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg)}
-  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-  header h1{font-size:15px;margin:0;letter-spacing:.5px}
+  html,body{margin:0;height:100%;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:14px;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:14px;margin:0}
   header h1 b{color:var(--accent)}
-  #meta{color:var(--dim);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  #meta{color:var(--dim);font-size:11px;display:flex;gap:12px;flex-wrap:wrap}
   #meta .k{color:var(--fg)}
   .pill{padding:1px 7px;border:1px solid var(--line);border-radius:10px}
-  main{display:grid;grid-template-columns:minmax(340px,1fr) 1.4fr;height:calc(100vh - 49px)}
-  #left{border-right:1px solid var(--line);overflow:auto;padding:14px}
-  #right{overflow:auto;padding:16px;background:var(--panel)}
-  #q{width:100%;padding:10px 12px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--fg);font:inherit}
+  #bar{display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  #q{flex:0 0 280px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:inherit}
   #q:focus{outline:none;border-color:var(--accent)}
-  .group{margin-top:16px}
-  .group h2{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:0 0 6px}
-  .row{padding:7px 9px;border:1px solid transparent;border-radius:7px;cursor:pointer}
-  .row:hover{background:var(--panel2);border-color:var(--line)}
-  .row .t{color:var(--fg)}
-  .row .s{color:var(--dim);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tag{font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--line);color:var(--dim);margin-right:6px}
-  .tag.mem{color:var(--accent2);border-color:var(--accent2)}
-  .tag.doc{color:var(--green);border-color:var(--green)}
-  .tag.sess{color:var(--amber);border-color:var(--amber)}
-  .tag.sym{color:var(--accent);border-color:var(--accent)}
-  .empty{color:var(--dim);padding:30px 6px;text-align:center}
-  h3{margin:0 0 4px;font-size:15px}
-  .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
-  pre{white-space:pre-wrap;word-break:break-word;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px;margin:8px 0}
-  .meta{color:var(--dim);font-size:12px;margin:12px 0 6px}
-  svg{width:100%;height:420px;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
-  .edge{stroke:var(--line);stroke-width:1.2}
-  .node circle{fill:var(--panel);stroke:var(--accent);stroke-width:1.5;cursor:pointer}
-  .node.focus circle{fill:#13314a;stroke-width:2.5}
-  .node text{fill:var(--fg);font-size:11px;cursor:pointer}
-  .node:hover circle{stroke:var(--accent2)}
-  ul.changes{margin:4px 0;padding-left:18px}
-  ul.changes li{color:var(--dim);font-size:12px}
+  #filters{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:11px;padding:2px 9px;border:1px solid var(--line);border-radius:11px;cursor:pointer;color:var(--dim);user-select:none;display:flex;align-items:center;gap:5px}
+  .chip .dot{width:9px;height:9px;border-radius:50%}
+  .chip.off{opacity:.35;text-decoration:line-through}
+  #count{color:var(--dim);font-size:11px;margin-left:auto}
+  #stage{position:relative;height:calc(100vh - 49px - 41px)}
+  #cy{width:100%;height:100%;background:var(--bg)}
+  #side{position:absolute;top:0;right:0;width:380px;max-width:80%;height:100%;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:16px;transform:translateX(100%);transition:transform .15s ease}
+  #side.open{transform:translateX(0)}
+  #side h3{margin:0 0 4px;font-size:15px;word-break:break-word}
+  #side .sub{color:var(--dim);font-size:12px;margin-bottom:12px}
+  #side pre{white-space:pre-wrap;word-break:break-word;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:11px;margin:8px 0;font-size:12px}
+  #side .meta{color:var(--dim);font-size:12px;margin:12px 0 6px}
+  #side ul{margin:4px 0;padding-left:18px}
+  #side li{color:var(--dim);font-size:12px;cursor:pointer}
+  #side li:hover{color:var(--accent)}
+  #close{position:absolute;top:10px;right:12px;color:var(--dim);cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -54,133 +47,143 @@
   <h1><b>Recanta</b> Explorer</h1>
   <div id="meta">loading…</div>
 </header>
-<main>
-  <section id="left">
-    <input id="q" placeholder="Search memory, documents, chats, code…" autocomplete="off" autofocus>
-    <div id="results"></div>
-  </section>
-  <section id="right"><div id="detail"></div></section>
-</main>
+<div id="bar">
+  <input id="q" placeholder="Search & focus nodes…" autocomplete="off">
+  <div id="filters"></div>
+  <span id="count"></span>
+</div>
+<div id="stage">
+  <div id="cy"></div>
+  <div id="loading">building graph…</div>
+  <aside id="side"><span id="close">esc</span><div id="detail"></div></aside>
+</div>
 <script>
-// All dynamic content is built with DOM APIs + textContent (never innerHTML), so
-// ingested data (code, docs, transcripts) can never inject markup.
-const SVGNS = 'http://www.w3.org/2000/svg';
+// Detail panel content is built with DOM APIs + textContent (never innerHTML), so
+// ingested code/docs/transcripts can't inject markup. Graph labels render on canvas.
 const api = async p => (await fetch(p)).json();
+const KIND = {
+  function:{c:'#5cc8ff',label:'function'}, method:{c:'#5cc8ff',label:'method'},
+  class:{c:'#a371f7',label:'class'}, struct:{c:'#a371f7',label:'struct'},
+  enum:{c:'#a371f7',label:'enum'}, trait:{c:'#a371f7',label:'trait'}, interface:{c:'#a371f7',label:'interface'},
+  module:{c:'#56d4c4',label:'module/file'}, document:{c:'#3fb950',label:'document'},
+  memory:{c:'#f778ba',label:'memory'}, session:{c:'#d29922',label:'session'}, commit:{c:'#8b95a5',label:'commit'},
+};
+const EDGE = { DEFINES:'#39414f', IMPORTS:'#3d6fa3', CHANGED_BY:'#9e6a26', EVIDENCE:'#a13d6e', MENTIONS:'#2f6f43', RELATED:'#6a4da8' };
+const el=(t,o={},k=[])=>{const n=document.createElement(t);if(o.class)n.className=o.class;if(o.text!=null)n.textContent=o.text;if(o.onClick)n.addEventListener('click',o.onClick);for(const c of k)if(c)n.appendChild(c);return n;};
+const clear=n=>{while(n.firstChild)n.removeChild(n.firstChild);};
 
-function el(tag, opts={}, kids=[]){
-  const n = document.createElement(tag);
-  if(opts.class) n.className = opts.class;
-  if(opts.text != null) n.textContent = opts.text;
-  if(opts.onClick) n.addEventListener('click', opts.onClick);
-  for(const k of kids) if(k) n.appendChild(k);
-  return n;
-}
-function svg(tag, attrs={}){
-  const n = document.createElementNS(SVGNS, tag);
-  for(const [k,v] of Object.entries(attrs)) n.setAttribute(k, v);
-  return n;
-}
-function clear(node){ while(node.firstChild) node.removeChild(node.firstChild); }
-function setEmpty(node, msg){ clear(node); node.appendChild(el('div',{class:'empty',text:msg})); }
-
-const results = document.getElementById('results');
-const detail = document.getElementById('detail');
-setEmpty(results, 'Type to search, or pick a symbol.');
-setEmpty(detail, 'Select a result to inspect it.');
+let cy, hidden = new Set();
 
 async function loadStatus(){
-  const meta = document.getElementById('meta');
-  try{
-    const s = await api('/api/status'); const c = s.counts||{};
-    clear(meta);
-    meta.appendChild(el('span',{class:'k',text:s.project||'project'}));
-    if(s.branch) meta.appendChild(el('span',{class:'pill',text:`${s.branch}@${s.head||''} ${s.dirty?'dirty':'clean'}`}));
-    meta.appendChild(el('span',{text:`index ${s.index}`}));
-    meta.appendChild(el('span',{text:`${c.memory} memory · ${c.symbols} symbols · ${c.documents} docs · ${c.sessions} chats`}));
-  }catch(e){ meta.textContent='no project (run recanta init)'; }
+  const m=document.getElementById('meta');
+  try{ const s=await api('/api/status'); const c=s.counts||{}; clear(m);
+    m.appendChild(el('span',{class:'k',text:s.project||''}));
+    if(s.branch)m.appendChild(el('span',{class:'pill',text:`${s.branch}@${s.head||''} ${s.dirty?'dirty':'clean'}`}));
+    m.appendChild(el('span',{text:`index ${s.index}`}));
+    m.appendChild(el('span',{text:`${c.symbols} symbols · ${c.documents} docs · ${c.memory} memory · ${c.sessions} chats`}));
+  }catch(e){ m.textContent='no project'; }
 }
 
-let timer;
-document.getElementById('q').addEventListener('input', e=>{ clearTimeout(timer); timer=setTimeout(()=>doSearch(e.target.value), 160); });
-
-function row(tag, title, sub, onClick){
-  const t = el('div',{class:'t'}, [el('span',{class:'tag '+tag, text:tag}), document.createTextNode(title)]);
-  return el('div',{class:'row', onClick}, [t, el('div',{class:'s', text:sub})]);
-}
-function group(title, items, make){
-  if(!items || !items.length) return null;
-  const g = el('div',{class:'group'}, [el('h2',{text:`${title} (${items.length})`})]);
-  for(const it of items) g.appendChild(make(it));
-  return g;
-}
-
-async function doSearch(q){
-  if(!q.trim()){ setEmpty(results,'Type to search, or pick a symbol.'); return; }
-  const r = await api('/api/search?q='+encodeURIComponent(q));
-  clear(results);
-  const groups = [
-    group('Code', r.symbols, x=>row('sym', x.qualified_name, `${x.type} · ${x.file}:${x.line}`, ()=>openSymbol(x.id))),
-    group('Memory', r.memory, x=>row('mem', x.title, `${x.scope}/${x.type} · ${x.snippet}`, ()=>openMemory(x.id))),
-    group('Documents', r.documents, x=>row('doc', x.title, x.path, ()=>openText(x.title, x.snippet))),
-    group('Chats', r.sessions, x=>row('sess', 'session '+(x.started_at||''), x.snippet, ()=>openText('chat', x.snippet))),
-  ].filter(Boolean);
-  if(!groups.length){ setEmpty(results,'No matches.'); return; }
-  for(const g of groups) results.appendChild(g);
+function styleSheet(){
+  return [
+    {selector:'node',style:{
+      'background-color': n=>KIND[n.data('kind')]?.c||'#888',
+      'width': n=>11+Math.min(n.degree(),22)*1.7, 'height': n=>11+Math.min(n.degree(),22)*1.7,
+      'label':'data(label)','color':'#c8d3e0','font-size':6,'text-opacity':0,
+      'min-zoomed-font-size':7,'text-wrap':'ellipsis','text-max-width':90,
+      'border-width':0.5,'border-color':'#0e1116'}},
+    {selector:'node[kind="module"],node[kind="document"],node[kind="memory"],node[kind="commit"],node[kind="session"]',style:{'text-opacity':1,'shape':'round-rectangle'}},
+    {selector:'edge',style:{'width':1,'line-color':e=>EDGE[e.data('rel')]||'#39414f','curve-style':'haystack','opacity':0.55,
+      'line-style':e=>(e.data('rel')==='MENTIONS'||e.data('rel')==='RELATED')?'dashed':'solid'}},
+    {selector:'.hl',style:{'text-opacity':1,'border-width':2,'border-color':'#5cc8ff','z-index':99}},
+    {selector:'.faded',style:{'opacity':0.08,'text-opacity':0}},
+    {selector:'.hide',style:{'display':'none'}},
+  ];
 }
 
-async function openSymbol(id){
-  const [d, g] = await Promise.all([api('/api/symbol?id='+id), api('/api/graph?focus='+id)]);
-  clear(detail);
-  detail.appendChild(el('h3',{text:d.qualified_name||'symbol'}));
-  detail.appendChild(el('div',{class:'sub',text:`${d.type} · ${d.file}:${d.start}-${d.end}`}));
-  if(d.signature) detail.appendChild(el('pre',{text:d.signature}));
-  if(d.changes && d.changes.length){
-    detail.appendChild(el('div',{class:'meta',text:'recent changes'}));
-    const ul = el('ul',{class:'changes'});
-    for(const c of d.changes) ul.appendChild(el('li',{text:`${c.change}${c.commit?(' @'+String(c.commit).slice(0,8)):''}`}));
-    detail.appendChild(ul);
+async function build(){
+  const g = await api('/api/graph/full');
+  const ids = new Set(g.nodes.map(n=>n.id));
+  const elements = [];
+  for(const n of g.nodes) elements.push({data:{...n}});
+  let ei=0;
+  for(const e of g.edges){ if(ids.has(e.source)&&ids.has(e.target)) elements.push({data:{id:'e'+(ei++),source:e.source,target:e.target,rel:e.rel}}); }
+
+  cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.08, maxZoom:2.2,
+    layout:{name:'cose',animate:false,nodeRepulsion:9000,idealEdgeLength:55,gravity:0.4,componentSpacing:70,nestingFactor:0.9,numIter:900}});
+  document.getElementById('loading').style.display='none';
+  document.getElementById('count').textContent = `${g.nodes.length} nodes · ${ei} edges`;
+
+  cy.on('tap','node', evt=>select(evt.target));
+  cy.on('tap', evt=>{ if(evt.target===cy){ deselect(); } });
+  buildFilters();
+  window.__cy = cy; // debug/testing handle
+
+}
+
+function select(node){
+  cy.elements().addClass('faded');
+  const hood = node.closedNeighborhood();
+  hood.removeClass('faded'); node.addClass('hl');
+  openDetail(node.data());
+}
+function deselect(){ cy.elements().removeClass('faded hl'); document.getElementById('side').classList.remove('open'); }
+
+function buildFilters(){
+  const present = [...new Set(cy.nodes().map(n=>n.data('kind')))];
+  const order = ['function','method','class','struct','enum','trait','interface','module','document','memory','session','commit'];
+  const kinds = order.filter(k=>present.includes(k));
+  const f=document.getElementById('filters'); clear(f);
+  for(const k of kinds){
+    const dot=el('span',{class:'dot'}); dot.style.background=KIND[k]?.c||'#888';
+    const chip=el('span',{class:'chip',onClick:()=>toggleKind(k,chip)},[dot,el('span',{text:(KIND[k]?.label||k)})]);
+    chip.dataset.kind=k; f.appendChild(chip);
   }
-  detail.appendChild(el('div',{class:'meta',text:'neighborhood (DEFINES / IMPORTS / CHANGED_BY)'}));
-  detail.appendChild(renderGraph(g));
+}
+function toggleKind(k,chip){
+  if(hidden.has(k)){ hidden.delete(k); chip.classList.remove('off'); } else { hidden.add(k); chip.classList.add('off'); }
+  cy.nodes().forEach(n=> n.toggleClass('hide', hidden.has(n.data('kind'))));
 }
 
-function renderGraph(g){
-  const W=600,H=420,cx=W/2,cy=H/2,R=150;
-  const s = svg('svg',{viewBox:`0 0 ${W} ${H}`});
-  if(!g.nodes || !g.nodes.length){ s.appendChild(svg('text',{x:cx,y:cy,fill:'#8b95a5'})).textContent='no relationships'; return s; }
-  const others = g.nodes.filter(n=>n.id!==g.focus), pos={};
-  pos[g.focus]=[cx,cy];
-  others.forEach((n,i)=>{ const a=(i/Math.max(others.length,1))*2*Math.PI - Math.PI/2; pos[n.id]=[cx+R*Math.cos(a), cy+R*Math.sin(a)]; });
-  for(const e of (g.edges||[])){ if(!pos[e.from]||!pos[e.to]) continue;
-    s.appendChild(svg('line',{class:'edge', x1:pos[e.from][0], y1:pos[e.from][1], x2:pos[e.to][0], y2:pos[e.to][1]})); }
-  for(const n of g.nodes){ const [x,y]=pos[n.id], focus=n.id===g.focus;
-    const grp = svg('g',{class:'node'+(focus?' focus':'')}); grp.addEventListener('click', ()=>openSymbol(n.id));
-    grp.appendChild(svg('circle',{cx:x, cy:y, r:focus?9:6}));
-    // Modules are file paths (shorten by '/'); code symbols are dotted names (by '.').
-    const lbl = String(n.label||'');
-    const short = n.type==='module' ? lbl.split('/').pop() : lbl.split('.').pop();
-    const tx = svg('text',{x:x+11, y:y+4}); tx.textContent = short+'  '+n.type;
-    grp.appendChild(tx); s.appendChild(grp);
+document.getElementById('q').addEventListener('input', e=>{
+  const v=e.target.value.trim().toLowerCase();
+  cy.elements().removeClass('faded hl');
+  if(!v) return;
+  const match = cy.nodes().filter(n=>(n.data('label')||'').toLowerCase().includes(v) || (n.data('id')||'').toLowerCase().includes(v));
+  if(!match.length) return;
+  cy.elements().addClass('faded'); match.removeClass('faded').addClass('hl');
+  cy.animate({fit:{eles:match,padding:80}},{duration:250});
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') deselect(); });
+document.getElementById('close').addEventListener('click', deselect);
+
+async function openDetail(d){
+  const side=document.getElementById('side'), box=document.getElementById('detail'); clear(box);
+  side.classList.add('open');
+  const kind=d.kind;
+  if(kind==='document'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'document'})); return; }
+  if(kind==='session'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'agent session'})); return; }
+  if(kind==='commit'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'commit'})); return; }
+  if(kind==='memory'){
+    const m=await api('/api/memory?id='+d.ref);
+    box.appendChild(el('h3',{text:m.title||'memory'}));
+    box.appendChild(el('div',{class:'sub',text:`${m.scope}/${m.type} · ${m.status} · ${m.created_at||''}`}));
+    box.appendChild(el('pre',{text:m.content||''}));
+    return;
   }
-  return s;
-}
-
-async function openMemory(id){
-  const m = await api('/api/memory?id='+id);
-  clear(detail);
-  detail.appendChild(el('h3',{text:m.title||'memory'}));
-  detail.appendChild(el('div',{class:'sub',text:`${m.scope}/${m.type} · ${m.status} · importance ${m.importance} · ${m.created_at}`}));
-  detail.appendChild(el('pre',{text:m.content||''}));
-  if(m.source_commits && m.source_commits!=='null') detail.appendChild(el('div',{class:'meta',text:'evidence commits: '+m.source_commits}));
-}
-
-function openText(title, body){
-  clear(detail);
-  detail.appendChild(el('h3',{text:title}));
-  detail.appendChild(el('pre',{text:body||''}));
+  // code symbol
+  const s=await api('/api/symbol?id='+d.ref);
+  box.appendChild(el('h3',{text:s.qualified_name||d.label}));
+  box.appendChild(el('div',{class:'sub',text:`${s.type} · ${s.file}:${s.start}-${s.end}`}));
+  if(s.signature) box.appendChild(el('pre',{text:s.signature}));
+  if(s.changes&&s.changes.length){ box.appendChild(el('div',{class:'meta',text:'recent changes'})); const ul=el('ul');
+    for(const c of s.changes) ul.appendChild(el('li',{text:`${c.change}${c.commit?(' @'+String(c.commit).slice(0,8)):''}`})); box.appendChild(ul); }
+  // jump to this node in the graph
+  box.appendChild(el('div',{class:'meta',text:'click a connected node in the graph to follow relations'}));
 }
 
 loadStatus();
+build().catch(e=>{ document.getElementById('loading').textContent='failed to build graph: '+e; });
 </script>
 </body>
 </html>

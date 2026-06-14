@@ -15,6 +15,8 @@ use crate::{db, repo};
 
 /// The single-file UI, embedded in the binary.
 const UI_HTML: &str = include_str!("ui.html");
+/// Vendored Cytoscape.js (embedded so the graph works fully offline — no CDN).
+const CYTOSCAPE_JS: &str = include_str!("vendor/cytoscape.min.js");
 
 /// Start the Explorer server (blocks until interrupted).
 pub fn run(paths: &Paths, host: &str, port: u16, open: bool) -> Result<()> {
@@ -57,8 +59,12 @@ fn route(
 
     let result: Result<String> = match path {
         "/" | "/index.html" => return (UI_HTML.to_string(), html, 200),
+        "/vendor/cytoscape.min.js" => {
+            return (CYTOSCAPE_JS.to_string(), "application/javascript; charset=utf-8", 200)
+        }
         "/api/status" => api::status(conn, cfg, root, repo_id),
         "/api/search" => api::search(conn, root, repo_id, query_param(url, "q").as_deref().unwrap_or("")),
+        "/api/graph/full" => api::full_graph(conn, repo_id),
         "/api/graph" => api::graph(conn, query_param(url, "focus").as_deref().unwrap_or("")),
         "/api/symbol" => api::symbol(conn, query_param(url, "id").as_deref().unwrap_or("")),
         "/api/memory" => api::memory(conn, query_param(url, "id").as_deref().unwrap_or("")),
