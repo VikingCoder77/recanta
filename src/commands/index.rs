@@ -45,10 +45,11 @@ pub fn run(args: IndexArgs, project_override: Option<&Path>) -> Result<()> {
     };
 
     println!(
-        "Indexed {} file(s): {} symbol(s), {} import(s){}",
+        "Indexed {} file(s): {} symbol(s), {} import(s), {} call(s){}",
         stats.files,
         stats.symbols,
         stats.imports,
+        stats.calls,
         if stats.deleted > 0 {
             format!(", {} marked deleted", stats.deleted)
         } else {

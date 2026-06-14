@@ -87,6 +87,28 @@ impl Lang {
     }
 }
 
+impl Lang {
+    /// Whether a node kind is a function/method call expression.
+    pub fn is_call(self, kind: &str) -> bool {
+        match self {
+            Lang::Python => kind == "call",
+            // JS/TS/Rust all use `call_expression` (Rust method calls included).
+            _ => kind == "call_expression",
+        }
+    }
+}
+
+/// Best-effort name of the function being called: the last identifier of the callee
+/// expression (`foo` / `obj.method` / `a::b::foo` / `self.bar` → the trailing name).
+pub fn callee_name(call: Node, src: &[u8]) -> Option<String> {
+    let func = call.child_by_field_name("function")?;
+    let text = func.utf8_text(src).ok()?.trim();
+    let seg = text.rsplit("::").next().unwrap_or(text);
+    let seg = seg.rsplit('.').next().unwrap_or(seg);
+    let name: String = seg.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    (name.len() >= 2 && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')).then_some(name)
+}
+
 /// The declared name of a definition node — the `name` field, or the `type` field for
 /// nodes like a Rust `impl` block (named after the type they implement). Generics are
 /// stripped (`Foo<T>` → `Foo`).

@@ -27,7 +27,7 @@
   .chip .dot{width:9px;height:9px;border-radius:50%}
   .chip.off{opacity:.35;text-decoration:line-through}
   #count{color:var(--dim);font-size:11px;margin-left:auto}
-  #stage{position:relative;height:calc(100vh - 49px - 41px)}
+  #stage{position:relative;height:calc(100vh - 49px - 41px);overflow:hidden}
   #cy{width:100%;height:100%;background:var(--bg)}
   #side{position:absolute;top:0;right:0;width:380px;max-width:80%;height:100%;background:var(--panel);border-left:1px solid var(--line);overflow:auto;padding:16px;transform:translateX(100%);transition:transform .15s ease}
   #side.open{transform:translateX(0)}
@@ -68,7 +68,7 @@ const KIND = {
   module:{c:'#56d4c4',label:'module/file'}, document:{c:'#3fb950',label:'document'},
   memory:{c:'#f778ba',label:'memory'}, session:{c:'#d29922',label:'session'}, commit:{c:'#8b95a5',label:'commit'},
 };
-const EDGE = { DEFINES:'#39414f', IMPORTS:'#3d6fa3', CHANGED_BY:'#9e6a26', EVIDENCE:'#a13d6e', MENTIONS:'#2f6f43', RELATED:'#6a4da8' };
+const EDGE = { DEFINES:'#39414f', IMPORTS:'#3d6fa3', CALLS:'#5cc8ff', CHANGED_BY:'#9e6a26', EVIDENCE:'#a13d6e', MENTIONS:'#2f6f43', RELATED:'#6a4da8' };
 const el=(t,o={},k=[])=>{const n=document.createElement(t);if(o.class)n.className=o.class;if(o.text!=null)n.textContent=o.text;if(o.onClick)n.addEventListener('click',o.onClick);for(const c of k)if(c)n.appendChild(c);return n;};
 const clear=n=>{while(n.firstChild)n.removeChild(n.firstChild);};
 
@@ -109,8 +109,12 @@ async function build(){
   let ei=0;
   for(const e of g.edges){ if(ids.has(e.source)&&ids.has(e.target)) elements.push({data:{id:'e'+(ei++),source:e.source,target:e.target,rel:e.rel}}); }
 
-  cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.08, maxZoom:2.2,
-    layout:{name:'cose',animate:false,nodeRepulsion:9000,idealEdgeLength:55,gravity:0.4,componentSpacing:70,nestingFactor:0.9,numIter:900}});
+  cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.06, maxZoom:2.2,
+    layout:{name:'cose',animate:false,fit:true,padding:40,nodeRepulsion:9000,idealEdgeLength:55,gravity:0.4,componentSpacing:70,nestingFactor:0.9,numIter:900}});
+  // Fit to the viewport once layout settles (and after the container has its size).
+  cy.one('layoutstop', ()=>{ cy.resize(); cy.fit(undefined, 40); });
+  setTimeout(()=>{ cy.resize(); cy.fit(undefined, 40); }, 120);
+  window.addEventListener('resize', ()=>{ cy.resize(); cy.fit(undefined, 40); });
   document.getElementById('loading').style.display='none';
   document.getElementById('count').textContent = `${g.nodes.length} nodes · ${ei} edges`;
 

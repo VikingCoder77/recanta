@@ -38,25 +38,35 @@ pub struct Symbol {
 pub struct FileParse {
     pub symbols: Vec<Symbol>,
     pub imports: Vec<String>,
+    /// Heuristic call edges: (caller qualified_name, called name). Resolved at index time.
+    pub calls: Vec<(String, String)>,
 }
 
-/// Parse source text into symbols + imports. Returns `None` if the grammar can't load.
+/// Parse source text into symbols + imports + calls. Returns `None` if the grammar
+/// can't load.
 pub fn parse_source(src: &str, lang: Lang) -> Option<FileParse> {
     let mut parser = Parser::new();
     parser.set_language(&lang.tree_sitter()).ok()?;
     let tree = parser.parse(src, None)?;
     let mut parse = FileParse::default();
     let mut scope: Vec<(String, bool)> = Vec::new();
-    walk(tree.root_node(), src.as_bytes(), lang, &mut scope, &mut parse);
+    walk(tree.root_node(), src.as_bytes(), lang, &mut scope, None, &mut parse);
     Some(parse)
 }
 
 /// Recursive descent: collect definitions (tracking enclosing scope to build qualified
-/// names) and imports, driven by each language's `classify`.
-fn walk(node: Node, src: &[u8], lang: Lang, scope: &mut Vec<(String, bool)>, out: &mut FileParse) {
+/// names), imports, and call edges (tracking the enclosing function as the caller).
+fn walk(node: Node, src: &[u8], lang: Lang, scope: &mut Vec<(String, bool)>, current_fn: Option<&str>, out: &mut FileParse) {
     use lang::Classified;
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
+        if lang.is_call(child.kind()) {
+            if let (Some(caller), Some(callee)) = (current_fn, lang::callee_name(child, src)) {
+                out.calls.push((caller.to_string(), callee));
+            }
+            walk(child, src, lang, scope, current_fn, out); // args may hold nested calls/closures
+            continue;
+        }
         let in_methods = scope.last().map(|(_, m)| *m).unwrap_or(false);
         match lang.classify(child.kind(), in_methods) {
             Classified::Import => {
@@ -66,10 +76,11 @@ fn walk(node: Node, src: &[u8], lang: Lang, scope: &mut Vec<(String, bool)>, out
             }
             Classified::Def { symbol_type, emit, scopes, methods } => {
                 let name = lang::def_name(child, src).unwrap_or_else(|| "<anonymous>".into());
+                let qualified = qualify(scope, &name);
                 if emit {
                     let text = child.utf8_text(src).unwrap_or("");
                     out.symbols.push(Symbol {
-                        qualified_name: qualify(scope, &name),
+                        qualified_name: qualified.clone(),
                         symbol_type: symbol_type.to_string(),
                         signature: first_line(text),
                         start_line: child.start_position().row as i64 + 1,
@@ -78,15 +89,21 @@ fn walk(node: Node, src: &[u8], lang: Lang, scope: &mut Vec<(String, bool)>, out
                         name: name.clone(),
                     });
                 }
+                // Calls inside a function/method attribute to it.
+                let inner_fn = if symbol_type == "function" || symbol_type == "method" {
+                    Some(qualified.as_str())
+                } else {
+                    current_fn
+                };
                 if scopes {
                     scope.push((name, methods));
-                    walk(child, src, lang, scope, out);
+                    walk(child, src, lang, scope, inner_fn, out);
                     scope.pop();
                 } else {
-                    walk(child, src, lang, scope, out);
+                    walk(child, src, lang, scope, inner_fn, out);
                 }
             }
-            Classified::Recurse => walk(child, src, lang, scope, out),
+            Classified::Recurse => walk(child, src, lang, scope, current_fn, out),
         }
     }
 }
@@ -118,6 +135,69 @@ pub struct IndexStats {
     pub symbols: usize,
     pub imports: usize,
     pub deleted: usize,
+    pub calls: usize,
+}
+
+/// Resolve heuristic call edges and insert them as low-confidence `CALLS` relationships
+/// (PRD §8.10). `calls` is `(file, caller_qualified_name, called_name)`. A call resolves
+/// only when the called name has exactly one definition in the repo — ambiguous names are
+/// skipped to keep the heuristic precise. Returns the number of edges inserted.
+/// Ubiquitous builtin/stdlib method names. A user symbol that happens to share one of
+/// these would otherwise absorb every `.map()`/`.get()`/… call in the codebase, so we
+/// never resolve calls to these names (precision over recall).
+const CALL_DENYLIST: &[&str] = &[
+    "map", "filter", "collect", "iter", "into_iter", "get", "set", "insert", "remove",
+    "push", "pop", "len", "is_empty", "clone", "unwrap", "unwrap_or", "unwrap_or_else",
+    "unwrap_or_default", "expect", "to_string", "to_owned", "to_vec", "into", "from",
+    "as_str", "as_ref", "as_mut", "as_deref", "contains", "find", "next", "take", "skip",
+    "join", "split", "trim", "parse", "ok", "err", "and_then", "or_else", "map_err",
+    "extend", "append", "values", "keys", "entry", "or_insert", "or_default", "read",
+    "write", "lock", "borrow", "starts_with", "ends_with", "replace", "format", "print",
+    "println", "eprintln", "min", "max", "count", "sort", "any", "all", "flatten",
+    "to_lowercase", "to_uppercase", "chars", "lines", "trim_end", "trim_start", "sum",
+    "context", "with_context", "ok_or_else", "first", "last", "drain", "retain",
+    "default", "new", "build", "value", "clone_from", "borrow_mut", "deref", "fmt",
+];
+
+fn insert_calls(conn: &Connection, repo_id: i64, calls: &[(String, String, String)]) -> Result<usize> {
+    if calls.is_empty() {
+        return Ok(0);
+    }
+    let mut by_name: HashMap<String, Vec<i64>> = HashMap::new();
+    let mut by_loc: HashMap<(String, String), i64> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, file_path, qualified_name FROM code_symbols
+             WHERE repo_id=?1 AND status='active' AND symbol_type IN ('function','method')",
+        )?;
+        let rows = stmt.query_map([repo_id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?))
+        })?;
+        for row in rows {
+            let (id, name, file, q) = row?;
+            by_name.entry(name).or_default().push(id);
+            by_loc.insert((file, q), id);
+        }
+    }
+    let mut seen: HashSet<(i64, i64)> = HashSet::new();
+    let mut count = 0;
+    for (file, caller_q, callee) in calls {
+        if CALL_DENYLIST.contains(&callee.as_str()) {
+            continue;
+        }
+        let Some(&caller_id) = by_loc.get(&(file.clone(), caller_q.clone())) else { continue };
+        if let Some(cands) = by_name.get(callee) {
+            if cands.len() == 1 && cands[0] != caller_id && seen.insert((caller_id, cands[0])) {
+                conn.execute(
+                    "INSERT INTO code_relationships (from_symbol_id, to_symbol_id, relationship_type, confidence, source)
+                     VALUES (?1, ?2, 'CALLS', 0.4, 'heuristic')",
+                    rusqlite::params![caller_id, cands[0]],
+                )?;
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
 }
 
 /// Full reindex of a repository's code graph.
@@ -157,6 +237,7 @@ pub fn index_repo(
     let mut seen: HashSet<i64> = HashSet::new();
     let mut stats = IndexStats::default();
 
+    let mut all_calls: Vec<(String, String, String)> = Vec::new();
     for abs in &files {
         let rel = abs.strip_prefix(root).unwrap_or(abs).to_string_lossy().to_string();
         let Some(lang) = abs.extension().and_then(|e| e.to_str()).and_then(Lang::from_extension)
@@ -166,8 +247,12 @@ pub fn index_repo(
         let Ok(src) = std::fs::read_to_string(abs) else { continue };
         let Some(parse) = parse_source(&src, lang) else { continue };
         reindex_file(&tx, repo_id, &rel, abs, &src, &parse, head, &mut existing, &mut seen, &mut stats)?;
+        for (caller, callee) in &parse.calls {
+            all_calls.push((rel.clone(), caller.clone(), callee.clone()));
+        }
         stats.files += 1;
     }
+    stats.calls = insert_calls(&tx, repo_id, &all_calls)?;
 
     // Anything previously active but not seen this run is now deleted (not removed).
     for ((_, _), id) in existing.iter() {
@@ -198,6 +283,7 @@ pub fn index_changed(
     let tx = conn.unchecked_transaction()?;
     let mut stats = IndexStats::default();
 
+    let mut all_calls: Vec<(String, String, String)> = Vec::new();
     for rel in changed {
         let abs = root.join(rel);
         // Existing active symbols for just this file.
@@ -227,6 +313,9 @@ pub fn index_changed(
         if let (Some(lang), Ok(src)) = (lang, std::fs::read_to_string(&abs)) {
             if let Some(parse) = parse_source(&src, lang) {
                 reindex_file(&tx, repo_id, rel, &abs, &src, &parse, head, &mut existing, &mut seen, &mut stats)?;
+                for (caller, callee) in &parse.calls {
+                    all_calls.push((rel.clone(), caller.clone(), callee.clone()));
+                }
                 stats.files += 1;
             }
         }
@@ -238,6 +327,7 @@ pub fn index_changed(
             }
         }
     }
+    stats.calls = insert_calls(&tx, repo_id, &all_calls)?;
 
     if let Some(h) = head {
         tx.execute("UPDATE repositories SET indexed_commit = ?1 WHERE id = ?2", rusqlite::params![h, repo_id])?;
@@ -471,6 +561,16 @@ mod tests {
         // The impl block itself is not emitted as a separate symbol.
         assert!(!got.iter().any(|(_, t)| *t == "impl"));
         assert!(p.imports.iter().any(|i| i.contains("std::collections")));
+    }
+
+    #[test]
+    fn extracts_calls_with_enclosing_caller() {
+        let src = "fn helper() {}\nfn run() {\n    helper();\n    other.method();\n}\n";
+        let p = parse_source(src, Lang::Rust).unwrap();
+        // `run` calls `helper` and `method`; module-level code has no caller.
+        assert!(p.calls.contains(&("run".to_string(), "helper".to_string())), "{:?}", p.calls);
+        assert!(p.calls.iter().any(|(c, _)| c == "run"));
+        assert!(p.calls.iter().all(|(c, _)| !c.is_empty()));
     }
 
     #[test]
