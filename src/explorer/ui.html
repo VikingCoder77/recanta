@@ -22,9 +22,11 @@
   #bar{display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
   #q{flex:0 0 280px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:inherit}
   #q:focus{outline:none;border-color:var(--accent)}
-  #filters{display:flex;gap:6px;flex-wrap:wrap}
+  #filters,#efilters{display:flex;gap:6px;flex-wrap:wrap}
+  .sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
   .chip{font-size:11px;padding:2px 9px;border:1px solid var(--line);border-radius:11px;cursor:pointer;color:var(--dim);user-select:none;display:flex;align-items:center;gap:5px}
   .chip .dot{width:9px;height:9px;border-radius:50%}
+  .chip .bar{width:13px;height:2px;border-radius:2px}
   .chip.off{opacity:.35;text-decoration:line-through}
   #count{color:var(--dim);font-size:11px;margin-left:auto}
   #stage{position:relative;height:calc(100vh - 49px - 41px);overflow:hidden}
@@ -50,6 +52,8 @@
 <div id="bar">
   <input id="q" placeholder="Search & focus nodes…" autocomplete="off">
   <div id="filters"></div>
+  <span class="sep"></span>
+  <div id="efilters"></div>
   <span id="count"></span>
 </div>
 <div id="stage">
@@ -96,6 +100,8 @@ function styleSheet(){
     {selector:'edge',style:{'width':1,'line-color':e=>EDGE[e.data('rel')]||'#39414f','curve-style':'haystack','opacity':0.55,
       'line-style':e=>(e.data('rel')==='MENTIONS'||e.data('rel')==='RELATED')?'dashed':'solid'}},
     {selector:'.hl',style:{'text-opacity':1,'border-width':2,'border-color':'#5cc8ff','z-index':99}},
+    {selector:'.lbl',style:{'text-opacity':1}},
+    {selector:'.hover',style:{'text-opacity':1,'min-zoomed-font-size':0,'font-size':9,'z-index':100,'border-width':1.5,'border-color':'#a371f7'}},
     {selector:'.faded',style:{'opacity':0.08,'text-opacity':0}},
     {selector:'.hide',style:{'display':'none'}},
   ];
@@ -120,7 +126,10 @@ async function build(){
 
   cy.on('tap','node', evt=>select(evt.target));
   cy.on('tap', evt=>{ if(evt.target===cy){ deselect(); } });
+  cy.on('mouseover','node', e=>e.target.addClass('hover'));
+  cy.on('mouseout','node', e=>e.target.removeClass('hover'));
   buildFilters();
+  buildEdgeFilters(g.edges);
   window.__cy = cy; // debug/testing handle
 
 }
@@ -128,10 +137,10 @@ async function build(){
 function select(node){
   cy.elements().addClass('faded');
   const hood = node.closedNeighborhood();
-  hood.removeClass('faded'); node.addClass('hl');
+  hood.removeClass('faded'); hood.nodes().addClass('lbl'); node.addClass('hl');
   openDetail(node.data());
 }
-function deselect(){ cy.elements().removeClass('faded hl'); document.getElementById('side').classList.remove('open'); }
+function deselect(){ cy.elements().removeClass('faded hl lbl'); document.getElementById('side').classList.remove('open'); }
 
 function buildFilters(){
   const present = [...new Set(cy.nodes().map(n=>n.data('kind')))];
@@ -147,6 +156,24 @@ function buildFilters(){
 function toggleKind(k,chip){
   if(hidden.has(k)){ hidden.delete(k); chip.classList.remove('off'); } else { hidden.add(k); chip.classList.add('off'); }
   cy.nodes().forEach(n=> n.toggleClass('hide', hidden.has(n.data('kind'))));
+}
+
+// Edge-type filters: toggle DEFINES / CALLS / IMPORTS / CHANGED_BY / MENTIONS / RELATED /
+// EVIDENCE so you can isolate, e.g., just the call graph or just file dependencies.
+let edgeHidden = new Set();
+function buildEdgeFilters(edges){
+  const order = ['DEFINES','CALLS','IMPORTS','CHANGED_BY','MENTIONS','RELATED','EVIDENCE'];
+  const present = new Set(edges.map(e=>e.rel));
+  const f=document.getElementById('efilters'); clear(f);
+  for(const rel of order.filter(r=>present.has(r))){
+    const bar=el('span',{class:'bar'}); bar.style.background=EDGE[rel]||'#888';
+    const chip=el('span',{class:'chip',onClick:()=>toggleEdge(rel,chip)},[bar,el('span',{text:rel.toLowerCase().replace('_',' ')})]);
+    f.appendChild(chip);
+  }
+}
+function toggleEdge(rel,chip){
+  if(edgeHidden.has(rel)){ edgeHidden.delete(rel); chip.classList.remove('off'); } else { edgeHidden.add(rel); chip.classList.add('off'); }
+  cy.edges('[rel="'+rel+'"]').toggleClass('hide', edgeHidden.has(rel));
 }
 
 document.getElementById('q').addEventListener('input', e=>{
