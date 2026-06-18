@@ -3,6 +3,31 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-06-18
+
+The Recanta Explorer — a local, read-only web UI to see and search your whole memory.
+
+### Explorer (`recanta serve`)
+- A local web UI served from the binary (binds `127.0.0.1`; no auth, no telemetry, no
+  write endpoints). **Cytoscape.js is vendored and embedded**, so the graph works fully
+  offline — no Node/Nuxt build and no CDN.
+- **Full force-directed knowledge graph** of everything: every code symbol + module,
+  documents, memories, sessions, and commits, connected by `DEFINES`, internal `IMPORTS`
+  (file-dependency graph), `CALLS`, `CHANGED_BY` (symbol↔commit), memory→`EVIDENCE`,
+  document→`MENTIONS` (code it references), and document↔document `RELATED` (shared
+  significant terms).
+- **Node-kind and edge-type filters** to isolate a view — e.g. just the call graph, or
+  just file dependencies. Search-to-focus, hover/neighborhood labels, and click-a-node to
+  fade to its neighborhood with a detail pane (signature/changes for code, content for
+  memories).
+
+### Code graph
+- **Heuristic `CALLS` edges** (low-confidence, `source='heuristic'`): extracted at index
+  time by matching each call's trailing name to a uniquely-named function/method, with a
+  denylist of ubiquitous builtin names (`map`/`get`/`unwrap`/`new`/…) to avoid false hubs.
+  `index` now reports the call count. Not a complete/authoritative call graph (proper
+  resolution is a later milestone).
+
 ## [0.2.0] - 2026-06-13
 
 Git & multi-harness breadth, plus Rust support so Recanta can index itself.
@@ -93,5 +118,6 @@ intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-o
 dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
 tasks are writable today via `remember --type`).
 
+[0.3.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.2.0
 [0.1.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.1.0
