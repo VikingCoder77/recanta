@@ -46,7 +46,13 @@ tree-sitter-rust = "0.24.2"
 tiny_http = "0.12.0"
 sqlite-vec = "0.1.9"
 ureq = { version = "3.2.1", features = ["json"] }
-fastembed = "5.17.2"
+fastembed = { version = "5.17.2", optional = true }
+
+[features]
+# Bundled offline embeddings (fastembed/ONNX). On by default; built off for targets
+# without an onnxruntime prebuilt (e.g. x86_64-apple-darwin) — those get provider+FTS.
+default = ["fastembed"]
+fastembed = ["dep:fastembed"]
 
 [profile.release]
 # Small, fast-starting binary — startup latency matters because hooks fire

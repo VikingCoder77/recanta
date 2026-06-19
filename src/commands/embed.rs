@@ -37,7 +37,10 @@ pub fn run(args: EmbedArgs, project_override: Option<&Path>) -> Result<()> {
         }
     });
     let embedder: Box<dyn embed::Embedder> = if args.bundled {
-        Box::new(embed::FastEmbed::new()?)
+        match embed::bundled() {
+            Some(r) => r?,
+            None => bail!("this build excludes the bundled model (fastembed feature is off)"),
+        }
     } else {
         embed::for_embed(model.as_deref())
             .map_err(|e| anyhow::anyhow!("could not initialize any embedder (provider + bundled both failed): {e}"))?

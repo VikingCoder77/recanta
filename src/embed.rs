@@ -77,14 +77,19 @@ impl Embedder for OpenAiCompatible {
 
 /// Bundled offline embedder (fastembed, ONNX/CPU). Downloads a small model
 /// (all-MiniLM-L6-v2, 384-dim) to a cache on first use; works with no external server.
+/// Built only when the `fastembed` feature is on (off for targets without an onnxruntime
+/// prebuilt, e.g. x86_64-apple-darwin — those rely on a local provider + FTS).
+#[cfg(feature = "fastembed")]
 pub struct FastEmbed {
     model: std::sync::Mutex<fastembed::TextEmbedding>,
 }
 
+#[cfg(feature = "fastembed")]
 impl FastEmbed {
     pub fn new() -> Result<Self> {
         let model = fastembed::TextEmbedding::try_new(
             fastembed::InitOptions::new(fastembed::EmbeddingModel::AllMiniLML6V2)
+                .with_cache_dir(model_cache_dir())
                 .with_show_download_progress(true),
         )
         .map_err(|e| anyhow!("fastembed init: {e}"))?;
@@ -92,6 +97,18 @@ impl FastEmbed {
     }
 }
 
+/// Where the bundled model is cached — under the user's home (`~/.recanta/models`), never
+/// the project/working directory (so it can't be committed). Falls back to the OS temp dir.
+#[cfg(feature = "fastembed")]
+fn model_cache_dir() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .map(|h| h.join(".recanta").join("models"))
+        .unwrap_or_else(|| std::env::temp_dir().join("recanta-models"))
+}
+
+#[cfg(feature = "fastembed")]
 impl Embedder for FastEmbed {
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         let docs: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -103,6 +120,18 @@ impl Embedder for FastEmbed {
     }
     fn provider(&self) -> &str { "fastembed" }
     fn model(&self) -> &str { "all-MiniLM-L6-v2" }
+}
+
+/// The bundled embedder, when compiled in. `None` here means the build excludes fastembed.
+pub fn bundled() -> Option<Result<Box<dyn Embedder>>> {
+    #[cfg(feature = "fastembed")]
+    {
+        Some(FastEmbed::new().map(|f| Box::new(f) as Box<dyn Embedder>))
+    }
+    #[cfg(not(feature = "fastembed"))]
+    {
+        None
+    }
 }
 
 fn parse_vec(v: &Value) -> Vec<f32> {
@@ -146,8 +175,16 @@ pub fn for_embed(model: Option<&str>) -> Result<Box<dyn Embedder>> {
             }
         }
     }
-    eprintln!("No embedding provider found; using the bundled model (fastembed). First run downloads it…");
-    Ok(Box::new(FastEmbed::new()?))
+    match bundled() {
+        Some(r) => {
+            eprintln!("No embedding provider found; using the bundled model (fastembed). First run downloads it…");
+            r
+        }
+        None => Err(anyhow!(
+            "no local embedding provider found, and this build excludes the bundled model.\n  \
+             Start Ollama or LM Studio with an embedding model (e.g. `ollama pull nomic-embed-text`)."
+        )),
+    }
 }
 
 /// Rebuild the embedder recorded at embed time, so query embeddings land in the same
@@ -155,7 +192,7 @@ pub fn for_embed(model: Option<&str>) -> Result<Box<dyn Embedder>> {
 /// caller then ranks FTS-only).
 pub fn for_search(provider: &str, model: &str) -> Option<Box<dyn Embedder>> {
     match provider {
-        "fastembed" => FastEmbed::new().ok().map(|f| Box::new(f) as Box<dyn Embedder>),
+        "fastembed" => bundled().and_then(Result::ok),
         "ollama" => {
             let p = Ollama { base: OLLAMA.into(), model: model.into() };
             probe(&p).then(|| Box::new(p) as Box<dyn Embedder>)
@@ -207,7 +244,7 @@ fn probe(e: &dyn Embedder) -> bool {
     matches!(e.embed(&["recanta".to_string()]), Ok(v) if v.first().is_some_and(|x| !x.is_empty()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "fastembed"))]
 mod fastembed_smoke {
     use super::Embedder;
 
