@@ -4,6 +4,7 @@
 pub mod brief;
 pub mod capture;
 pub mod changed;
+pub mod embed;
 pub mod import_sessions;
 pub mod index;
 pub mod ingest;

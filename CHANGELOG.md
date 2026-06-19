@@ -3,6 +3,26 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-19
+
+Retrieval depth — semantic search over your memory.
+
+### Semantic search
+- **`sqlite-vec`** is compiled in: embeddings live in the same `recanta.db` (a `vec0`
+  table), one file, no extra process.
+- **`recanta embed`** computes memory embeddings. Backend chain (provider → bundled →
+  FTS): a **local provider** if one has an embedding model — Ollama (`/api/embed`) or any
+  OpenAI-compatible server like LM Studio (`/v1/embeddings`), auto-detected — otherwise the
+  **bundled offline model** (fastembed, ONNX/CPU, all-MiniLM-L6-v2; downloads on first use,
+  no external server needed; `--bundled` forces it).
+- **`search` ranks hybrid** — reciprocal-rank fusion of FTS5/BM25 + vector KNN — and
+  **degrades to FTS-only** when no embedder is reachable (the hard rule). Settings persist
+  in `project.json`; `status` shows the provider, model, and vector count.
+
+### Notes
+- onnxruntime is statically linked for the bundled path, so the binary is self-contained
+  but noticeably larger than 0.3.x.
+
 ## [0.3.0] - 2026-06-18
 
 The Recanta Explorer — a local, read-only web UI to see and search your whole memory.
@@ -118,6 +138,7 @@ intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-o
 dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
 tasks are writable today via `remember --type`).
 
+[0.4.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.4.0
 [0.3.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.2.0
 [0.1.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.1.0

@@ -77,9 +77,11 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
     if args.scope != Some(Scope::User) {
         if let Ok(paths) = Paths::discover(project_override) {
             let conn = db::open_existing(&paths.db)?;
+            let cfg = crate::project::Config::load(&paths.config).ok();
             let branch = crate::git::current_branch(&paths.root);
             let filter = args.scope.filter(|s| *s != Scope::User);
-            results.extend(memory::search(&conn, &match_expr, filter, branch.as_deref(), FETCH_LIMIT)?.into_iter().map(Match::Memory));
+            let mem = hybrid_memory(&conn, cfg.as_ref(), &args.query, &match_expr, filter, branch.as_deref(), FETCH_LIMIT)?;
+            results.extend(mem.into_iter().map(Match::Memory));
             // Documents and session transcripts have no scope; include them only on an
             // unrestricted search.
             if args.scope.is_none() {
@@ -133,6 +135,63 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Memory hits, ranked hybrid (vector + FTS) when embeddings are enabled, else FTS-only.
+/// Degrades to FTS gracefully if the embedder can't be reached at query time.
+fn hybrid_memory(
+    conn: &rusqlite::Connection,
+    cfg: Option<&crate::project::Config>,
+    raw_query: &str,
+    match_expr: &str,
+    scope: Option<Scope>,
+    branch: Option<&str>,
+    limit: usize,
+) -> Result<Vec<Hit>> {
+    let fts = memory::search(conn, match_expr, scope, branch, limit)?;
+    let enabled = cfg.is_some_and(|c| c.embeddings.enabled);
+    if !enabled {
+        return Ok(fts);
+    }
+    let (provider, model) = cfg
+        .map(|c| (c.embeddings.provider.clone(), c.embeddings.model.clone()))
+        .unwrap_or_default();
+    let Some(embedder) = crate::embed::for_search(&provider, &model) else { return Ok(fts) };
+    let Ok(qv) = embedder.embed(&[raw_query.to_string()]) else { return Ok(fts) };
+    let Some(qvec) = qv.into_iter().next().filter(|v| !v.is_empty()) else { return Ok(fts) };
+    let vec = memory::vector_search(conn, &qvec, scope, branch, limit)?;
+    Ok(rrf_merge(fts, vec))
+}
+
+/// Reciprocal-rank fusion of two ranked memory lists.
+fn rrf_merge(fts: Vec<Hit>, vec: Vec<Hit>) -> Vec<Hit> {
+    use std::collections::HashMap;
+    const K: f64 = 60.0;
+    let mut score: HashMap<i64, f64> = HashMap::new();
+    let mut row: HashMap<i64, Hit> = HashMap::new();
+    for (i, h) in fts.into_iter().enumerate() {
+        let id = h.row.id;
+        *score.entry(id).or_default() += 1.0 / (K + i as f64);
+        row.entry(id).or_insert(h);
+    }
+    for (i, h) in vec.into_iter().enumerate() {
+        let id = h.row.id;
+        *score.entry(id).or_default() += 1.0 / (K + i as f64);
+        row.entry(id).or_insert(h);
+    }
+    // Store negative score in `rank` so the existing ascending-by-rank sort puts the
+    // highest fused score first.
+    let mut out: Vec<Hit> = row
+        .into_values()
+        .map(|mut h| {
+            h.rank = -score[&h.row.id];
+            h
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        a.rank.partial_cmp(&b.rank).unwrap_or(std::cmp::Ordering::Equal).then(a.row.id.cmp(&b.row.id))
+    });
+    out
 }
 
 fn render_block(m: &Match, with_evidence: bool) -> String {

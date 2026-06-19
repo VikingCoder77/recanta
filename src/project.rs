@@ -106,6 +106,26 @@ pub struct Config {
     /// loading older `project.json` files.
     #[serde(default)]
     pub capture: CapturePolicy,
+    /// Embedding / semantic-search settings (PRD §12.1, v0.4). Off until `recanta embed`.
+    #[serde(default)]
+    pub embeddings: EmbedSettings,
+}
+
+/// Semantic-search configuration, recorded after a successful `recanta embed`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmbedSettings {
+    /// True once memories have been embedded; enables hybrid search.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Provider used (e.g. `ollama`).
+    #[serde(default)]
+    pub provider: String,
+    /// Model identifier.
+    #[serde(default)]
+    pub model: String,
+    /// Embedding dimension (vec0 column width).
+    #[serde(default)]
+    pub dim: u32,
 }
 
 /// Governs non-code capture (sessions/documents). For the AIOS "never forget" goal,
@@ -195,6 +215,7 @@ pub fn new_config(root: &Path) -> Result<Config> {
         created_at: now_rfc3339(),
         ignore: Config::default_ignore(),
         capture: CapturePolicy::default(),
+        embeddings: EmbedSettings::default(),
     })
 }
 

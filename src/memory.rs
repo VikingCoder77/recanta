@@ -239,6 +239,62 @@ pub fn top_user_prefs(conn: &Connection, limit: usize) -> Result<Vec<MemoryRow>>
     Ok(rows)
 }
 
+/// (Re)create the `memory_vec` vec0 table for the given dimension, dropping any prior
+/// one (dimension is fixed at creation, so a model change requires a rebuild).
+pub fn ensure_vec_table(conn: &Connection, dim: u32) -> Result<()> {
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS memory_vec;
+         CREATE VIRTUAL TABLE memory_vec USING vec0(embedding float[{dim}]);"
+    ))
+    .context("creating memory_vec")?;
+    Ok(())
+}
+
+/// Store one memory's embedding (rowid = memory id).
+pub fn store_vector(conn: &Connection, memory_id: i64, vector: &[f32]) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memory_vec(rowid, embedding) VALUES (?1, ?2)",
+        rusqlite::params![memory_id, crate::embed::to_blob(vector)],
+    )?;
+    Ok(())
+}
+
+/// Vector KNN over active memories, honoring scope/branch visibility. `query` is the
+/// query embedding. Returns hits ranked by ascending distance (best first).
+pub fn vector_search(
+    conn: &Connection,
+    query: &[f32],
+    scope: Option<Scope>,
+    branch: Option<&str>,
+    limit: usize,
+) -> Result<Vec<Hit>> {
+    // Over-fetch from the KNN, then filter by status/scope/branch (vec0 wants a bare k).
+    let sql = "SELECT m.id, m.type, m.scope, m.title, m.content, m.importance, m.status,
+                      m.updated_at, v.distance AS rank
+               FROM (SELECT rowid, distance FROM memory_vec
+                     WHERE embedding MATCH ?1 ORDER BY distance LIMIT ?2) v
+               JOIN memory_items m ON m.id = v.rowid
+               WHERE m.status = 'active'
+                 AND (?3 IS NULL OR m.scope = ?3)
+                 AND (m.scope != 'branch' OR m.branch = ?4)
+               ORDER BY v.distance
+               LIMIT ?5";
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![
+                crate::embed::to_blob(query),
+                (limit * 4).max(20) as i64,
+                scope.map(|s| s.as_str()),
+                branch.unwrap_or(""),
+                limit as i64
+            ],
+            map_hit,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 fn map_row(r: &rusqlite::Row) -> rusqlite::Result<MemoryRow> {
     Ok(MemoryRow {
         id: r.get(0)?,
@@ -312,6 +368,28 @@ mod tests {
         let risks = by_types(&conn, &[MemType::Warning, MemType::Bug], None, None, 10).unwrap();
         assert_eq!(risks.len(), 1);
         assert_eq!(risks[0].title, "a risk");
+    }
+
+    #[test]
+    fn vector_search_ranks_by_distance() {
+        crate::db::register_vec();
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::migrate(&conn).unwrap();
+        let mk = |t: &str| {
+            insert(&conn, &NewMemory {
+                mem_type: MemType::Semantic, scope: Scope::Project, title: t.into(),
+                content: t.into(), importance: Importance::Normal, confidence: 1.0, branch: None,
+            }).unwrap()
+        };
+        let apple = mk("apple");
+        let zebra = mk("zebra");
+        ensure_vec_table(&conn, 3).unwrap();
+        store_vector(&conn, apple, &[1.0, 0.0, 0.0]).unwrap();
+        store_vector(&conn, zebra, &[0.0, 1.0, 0.0]).unwrap();
+
+        let hits = vector_search(&conn, &[0.9, 0.1, 0.0], None, None, 5).unwrap();
+        assert_eq!(hits.first().map(|h| h.row.id), Some(apple), "nearest should be apple");
+        assert!(hits.iter().any(|h| h.row.id == zebra));
     }
 
     #[test]

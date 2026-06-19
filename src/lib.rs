@@ -14,6 +14,7 @@ pub mod cli;
 pub mod commands;
 pub mod db;
 pub mod documents;
+pub mod embed;
 pub mod eventlog;
 pub mod explorer;
 pub mod extract;

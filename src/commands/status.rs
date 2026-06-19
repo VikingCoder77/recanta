@@ -72,6 +72,17 @@ pub fn run(project_override: Option<&Path>) -> Result<()> {
     println!("capture   {raw} (retention {}d)", cfg.capture.retention_days);
     let redactions: i64 = count(&conn, "redaction_audit")?;
     println!("redacted  {redactions} secret(s) caught before storage");
+
+    // Embeddings / semantic search (PRD §12.1).
+    if cfg.embeddings.enabled {
+        let vecs: i64 = count(&conn, "memory_vec").unwrap_or(0);
+        println!(
+            "embed     on · {} vectors via {}/{} (dim {})",
+            vecs, cfg.embeddings.provider, cfg.embeddings.model, cfg.embeddings.dim
+        );
+    } else {
+        println!("embed     off (FTS-only; run `recanta embed` to enable semantic search)");
+    }
     Ok(())
 }
 
