@@ -3,6 +3,39 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-06-20
+
+A thin MCP bridge, plus a multi-project workspace overview for the Explorer.
+
+### Workspace — one Explorer across all your projects
+- **Per-project stores stay separate** (the single-file moat is intact); the Explorer
+  unions them **at read time**. Each project keeps its own identity — no merged database.
+- **Auto-registration:** `recanta init` adds the project to `~/.recanta/workspace.json`
+  (opt out with `--no-register`). Manage it with **`recanta workspace`**
+  (`list`/`add`/`remove`/`enable`/`disable`).
+- **`recanta serve` defaults to workspace mode** — it opens every registered project and the
+  Explorer shows a **project filter** (toggle each store in/out, color-coded). The current
+  project is always included even if unregistered. Falls back to single-project when the
+  registry is empty/disabled, or with `--project`/`--single`.
+- Node ids are namespaced per project so stores never collide; `/api/status` and
+  `/api/graph/full` aggregate, and detail endpoints resolve by `project` key. The detail
+  panel badges which project a node came from.
+
+### MCP bridge (`recanta mcp`)
+
+### MCP bridge (`recanta mcp`)
+- **Model Context Protocol over stdio** (JSON-RPC 2.0, newline-delimited): `initialize` →
+  `tools/list` → `tools/call`, plus `ping` and notification handling. Local-only, no
+  network, no telemetry.
+- **Four `recanta_*` tools**, well under the PRD's ≤5-tool cap: `recanta_brief`,
+  `recanta_search`, `recanta_remember`, `recanta_inspect`. The bridge re-enters the *same*
+  in-process command logic the CLI uses (the new shared `render` functions), so redaction,
+  token-budgeting, and ranking are byte-for-byte identical to the CLI.
+- stdout carries protocol frames only (diagnostics go to stderr), so command output can't
+  corrupt the JSON-RPC stream. Tool-execution failures surface as a normal result with
+  `isError: true` (per spec), never a transport error.
+- Register with any MCP client, e.g. `claude mcp add recanta -- recanta mcp --project <repo>`.
+
 ## [0.4.0] - 2026-06-19
 
 Retrieval depth — semantic search over your memory.

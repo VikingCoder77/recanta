@@ -28,6 +28,12 @@ pub struct InspectArgs {
 }
 
 pub fn run(args: InspectArgs, project_override: Option<&Path>) -> Result<()> {
+    println!("{}", render(args, project_override)?);
+    Ok(())
+}
+
+/// Build the inspection report text (shared by the CLI and the MCP bridge).
+pub fn render(args: InspectArgs, project_override: Option<&Path>) -> Result<String> {
     let paths = Paths::discover(project_override)?;
     let conn = db::open_existing(&paths.db)?;
     let project_id = repo::current_project_id(&conn)?;
@@ -55,15 +61,13 @@ pub fn run(args: InspectArgs, project_override: Option<&Path>) -> Result<()> {
             Freshness::NotIndexed => " (code graph not built — run `recanta index`)",
             _ => "",
         };
-        println!("no {} matching {:?}{hint}", args.kind, args.target);
-        return Ok(());
+        return Ok(format!("no {} matching {:?}{hint}", args.kind, args.target));
     }
 
     if let Some(note) = staleness_note(&fresh) {
         blocks.push(note);
     }
-    println!("{}", output::pack(blocks, args.budget));
-    Ok(())
+    Ok(output::pack(blocks, args.budget))
 }
 
 /// Render matching symbols (with location, signature, recent changes).

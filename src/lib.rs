@@ -22,11 +22,13 @@ pub mod git;
 pub mod graph;
 pub mod hash;
 pub mod install;
+pub mod mcp;
 pub mod memory;
 pub mod output;
 pub mod project;
 pub mod redact;
 pub mod repo;
 pub mod sessions;
+pub mod workspace;
 
 pub use cli::Cli;

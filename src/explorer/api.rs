@@ -1,17 +1,39 @@
 //! Read-only JSON endpoints for the Explorer, over the existing store + retrieval.
 
-use std::path::Path;
-
 use anyhow::Result;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use super::ProjectStore;
 use crate::memory;
 use crate::repo::{self, Freshness};
 use crate::{documents, git, sessions};
 
-/// `/api/status` — identity, git state, counts, index freshness.
-pub fn status(conn: &Connection, cfg: &crate::project::Config, root: &Path, repo_id: Option<i64>) -> Result<String> {
+/// `/api/status` — per-project identity/state/counts plus combined totals for the whole
+/// workspace. The UI shows totals and, in multi-project mode, the project list.
+pub fn status_all(stores: &[ProjectStore]) -> Result<String> {
+    let mut projects: Vec<Value> = Vec::new();
+    let mut totals = Counts::default();
+    for s in stores {
+        let (meta, counts) = status_value(s);
+        totals.add(&counts);
+        let mut obj = meta;
+        obj["key"] = json!(s.key);
+        obj["counts"] = counts.to_json();
+        projects.push(obj);
+    }
+    Ok(json!({
+        "workspace": stores.len() > 1,
+        "projects": projects,
+        "counts": totals.to_json(),
+    })
+    .to_string())
+}
+
+/// Per-project status: (identity/git/index metadata, counts).
+fn status_value(store: &ProjectStore) -> (Value, Counts) {
+    let conn = &store.conn;
+    let root = &store.root;
     let count = |t: &str| -> i64 {
         conn.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap_or(0)
     };
@@ -21,7 +43,8 @@ pub fn status(conn: &Connection, cfg: &crate::project::Config, root: &Path, repo
             [], |r| r.get(0),
         )
         .unwrap_or(0);
-    let freshness = repo_id
+    let freshness = store
+        .repo_id
         .and_then(|id| repo::freshness(conn, id, root).ok())
         .map(|f| match f {
             Freshness::Fresh => "fresh".to_string(),
@@ -31,48 +54,100 @@ pub fn status(conn: &Connection, cfg: &crate::project::Config, root: &Path, repo
         })
         .unwrap_or_else(|| "n/a".into());
 
-    Ok(json!({
-        "project": cfg.name,
+    let counts = Counts {
+        memory: count("memory_items"),
+        documents: count("documents"),
+        sessions: count("sessions"),
+        symbols: active_symbols,
+        events: count("events"),
+    };
+    let meta = json!({
+        "project": store.name,
         "branch": git::current_branch(root),
         "head": git::head_sha(root).map(|s| s[..s.len().min(10)].to_string()),
         "dirty": git::is_dirty(root),
         "index": freshness,
-        "counts": {
-            "memory": count("memory_items"),
-            "documents": count("documents"),
-            "sessions": count("sessions"),
-            "symbols": active_symbols,
-            "events": count("events"),
-        }
-    })
-    .to_string())
+    });
+    (meta, counts)
 }
 
-/// `/api/search?q=` — unified results across memory, documents, transcripts, and symbols.
-pub fn search(conn: &Connection, root: &Path, repo_id: Option<i64>, q: &str) -> Result<String> {
+#[derive(Default)]
+struct Counts {
+    memory: i64,
+    documents: i64,
+    sessions: i64,
+    symbols: i64,
+    events: i64,
+}
+
+impl Counts {
+    fn add(&mut self, o: &Counts) {
+        self.memory += o.memory;
+        self.documents += o.documents;
+        self.sessions += o.sessions;
+        self.symbols += o.symbols;
+        self.events += o.events;
+    }
+    fn to_json(&self) -> Value {
+        json!({
+            "memory": self.memory,
+            "documents": self.documents,
+            "sessions": self.sessions,
+            "symbols": self.symbols,
+            "events": self.events,
+        })
+    }
+}
+
+/// `/api/search?q=` — unified results across memory, documents, transcripts, and symbols,
+/// merged across every open project (each result tagged with its project).
+pub fn search_all(stores: &[ProjectStore], q: &str) -> Result<String> {
     let Some(expr) = memory::fts_query(q) else {
         return Ok(json!({"query": q, "memory": [], "documents": [], "sessions": [], "symbols": []}).to_string());
     };
-    let branch = git::current_branch(root);
-
-    let mem: Vec<Value> = memory::search(conn, &expr, None, branch.as_deref(), 25)?
-        .into_iter()
-        .map(|h| json!({"id": h.row.id, "scope": h.row.scope, "type": h.row.mem_type, "title": h.row.title, "snippet": snippet(&h.row.content, 160)}))
-        .collect();
-    let docs: Vec<Value> = documents::search(conn, &expr, 25)?
-        .into_iter()
-        .map(|d| json!({"id": d.id, "title": d.title, "path": d.path, "snippet": flatten(&d.snippet)}))
-        .collect();
-    let sess: Vec<Value> = sessions::search_transcripts(conn, &expr, 25)?
-        .into_iter()
-        .map(|s| json!({"id": s.session_id, "started_at": s.started_at, "snippet": flatten(&s.snippet)}))
-        .collect();
-    let syms = match repo_id {
-        Some(id) => symbol_matches(conn, id, q)?,
-        None => vec![],
-    };
-
+    let (mut mem, mut docs, mut sess, mut syms) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for s in stores {
+        search_store(s, q, &expr, &mut mem, &mut docs, &mut sess, &mut syms)?;
+    }
     Ok(json!({"query": q, "memory": mem, "documents": docs, "sessions": sess, "symbols": syms}).to_string())
+}
+
+/// Append one store's matches (tagged with `project`/`projectName`) to the shared buckets.
+fn search_store(
+    store: &ProjectStore,
+    q: &str,
+    expr: &str,
+    mem: &mut Vec<Value>,
+    docs: &mut Vec<Value>,
+    sess: &mut Vec<Value>,
+    syms: &mut Vec<Value>,
+) -> Result<()> {
+    let conn = &store.conn;
+    let tag = |mut v: Value| -> Value {
+        v["project"] = json!(store.key);
+        v["projectName"] = json!(store.name);
+        v
+    };
+    let branch = git::current_branch(&store.root);
+    mem.extend(
+        memory::search(conn, expr, None, branch.as_deref(), 25)?
+            .into_iter()
+            .map(|h| tag(json!({"id": h.row.id, "scope": h.row.scope, "type": h.row.mem_type, "title": h.row.title, "snippet": snippet(&h.row.content, 160)}))),
+    );
+    docs.extend(
+        documents::search(conn, expr, 25)?
+            .into_iter()
+            .map(|d| tag(json!({"id": d.id, "title": d.title, "path": d.path, "snippet": flatten(&d.snippet)}))),
+    );
+    sess.extend(
+        sessions::search_transcripts(conn, expr, 25)?
+            .into_iter()
+            .map(|s| tag(json!({"id": s.session_id, "started_at": s.started_at, "snippet": flatten(&s.snippet)}))),
+    );
+    if let Some(id) = store.repo_id {
+        syms.extend(symbol_matches(conn, id, q)?.into_iter().map(tag));
+    }
+    Ok(())
 }
 
 fn symbol_matches(conn: &Connection, repo_id: i64, q: &str) -> Result<Vec<Value>> {
@@ -158,7 +233,45 @@ pub fn graph(conn: &Connection, focus: &str) -> Result<String> {
 /// `/api/graph/full` — the whole knowledge graph: code symbols + modules, documents,
 /// memories, sessions, commits, and the relationships between them (DEFINES, resolved
 /// internal IMPORTS, CHANGED_BY, memory→evidence, document→code, document↔document).
-pub fn full_graph(conn: &Connection, repo_id: Option<i64>) -> Result<String> {
+/// Aggregate the full graph across every open project. Each project's node ids are
+/// namespaced with its `key` (and every node tagged with `project`/`projectName`), so
+/// stores can be unioned into one view without id collisions, and the UI can filter or
+/// color by project. A `projects` list rides along for the project filter chips.
+pub fn full_graph_all(stores: &[ProjectStore]) -> Result<String> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut edges: Vec<Value> = Vec::new();
+    let mut projects: Vec<Value> = Vec::new();
+    for s in stores {
+        let (local_nodes, local_edges) = collect_graph(&s.conn, s.repo_id)?;
+        for mut n in local_nodes {
+            if let Some(raw) = n["id"].as_str().map(str::to_string) {
+                n["id"] = json!(ns(&s.key, &raw));
+            }
+            n["project"] = json!(s.key);
+            n["projectName"] = json!(s.name);
+            nodes.push(n);
+        }
+        for mut e in local_edges {
+            if let Some(src) = e["source"].as_str().map(str::to_string) {
+                e["source"] = json!(ns(&s.key, &src));
+            }
+            if let Some(tgt) = e["target"].as_str().map(str::to_string) {
+                e["target"] = json!(ns(&s.key, &tgt));
+            }
+            edges.push(e);
+        }
+        projects.push(json!({"key": s.key, "name": s.name}));
+    }
+    Ok(json!({"nodes": nodes, "edges": edges, "projects": projects}).to_string())
+}
+
+/// Namespace a per-store node id with the project key (`p0~sym:42`).
+fn ns(key: &str, id: &str) -> String {
+    format!("{key}~{id}")
+}
+
+/// Build one project's nodes + edges with store-local ids (caller namespaces them).
+fn collect_graph(conn: &Connection, repo_id: Option<i64>) -> Result<(Vec<Value>, Vec<Value>)> {
     let mut nodes: Vec<Value> = Vec::new();
     let mut edges: Vec<Value> = Vec::new();
     // Node ids are type-prefixed so id-spaces never collide.
@@ -291,7 +404,7 @@ pub fn full_graph(conn: &Connection, repo_id: Option<i64>) -> Result<String> {
         }
     }
 
-    Ok(json!({"nodes": nodes, "edges": edges}).to_string())
+    Ok((nodes, edges))
 }
 
 /// Documents as nodes, linked to the code they mention (MENTIONS) and to other documents
@@ -445,4 +558,18 @@ fn snippet(text: &str, max: usize) -> String {
 
 fn flatten(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespacing_keeps_per_store_ids_distinct() {
+        // Two stores with the same local id must map to different namespaced ids, and the
+        // separator must survive the already-prefixed local id (`sym:`/`mem:` etc.).
+        assert_eq!(ns("p0", "mem:1"), "p0~mem:1");
+        assert_eq!(ns("p1", "mem:1"), "p1~mem:1");
+        assert_ne!(ns("p0", "sym:42"), ns("p1", "sym:42"));
+    }
 }

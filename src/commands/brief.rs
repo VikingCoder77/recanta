@@ -27,6 +27,12 @@ pub struct BriefArgs {
 }
 
 pub fn run(args: BriefArgs, project_override: Option<&Path>) -> Result<()> {
+    println!("{}", render(args, project_override)?);
+    Ok(())
+}
+
+/// Assemble the briefing text (shared by the CLI and the MCP bridge).
+pub fn render(args: BriefArgs, project_override: Option<&Path>) -> Result<String> {
     let paths = Paths::discover(project_override)?;
     let cfg = Config::load(&paths.config)?;
     let conn = db::open_existing(&paths.db)?;
@@ -52,8 +58,7 @@ pub fn run(args: BriefArgs, project_override: Option<&Path>) -> Result<()> {
         blocks.extend(relevant(&conn, task, branch)?);
     }
 
-    println!("{}", output::pack(blocks, args.budget));
-    Ok(())
+    Ok(output::pack(blocks, args.budget))
 }
 
 fn header(cfg: &Config, root: &Path) -> String {

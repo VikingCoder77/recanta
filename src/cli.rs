@@ -81,6 +81,12 @@ pub enum Command {
     /// Serve the local, read-only Explorer web UI.
     Serve(commands::serve::ServeArgs),
 
+    /// Run the Model Context Protocol bridge over stdio (≤5 tools, local-only).
+    Mcp(crate::mcp::McpArgs),
+
+    /// Manage the cross-project workspace the Explorer aggregates.
+    Workspace(commands::workspace::WorkspaceArgs),
+
     /// Apply pending SQLite schema migrations.
     Migrate(commands::migrate::MigrateArgs),
 }
@@ -113,6 +119,8 @@ impl Cli {
             Command::Capture(args) => commands::capture::run(args, project),
             Command::Embed(args) => commands::embed::run(args, project),
             Command::Serve(args) => commands::serve::run(args, project),
+            Command::Mcp(args) => crate::mcp::run(args, project),
+            Command::Workspace(args) => commands::workspace::run(args, project),
             Command::Migrate(args) => commands::migrate::run(args, project),
         }
     }

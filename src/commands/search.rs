@@ -66,9 +66,15 @@ pub struct SearchArgs {
 }
 
 pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
+    print!("{}", render(args, project_override)?);
+    Ok(())
+}
+
+/// Run the search and render its output (shared by the CLI and the MCP bridge). The
+/// returned string is ready to write verbatim, including any trailing newline.
+pub fn render(args: SearchArgs, project_override: Option<&Path>) -> Result<String> {
     let Some(match_expr) = memory::fts_query(&args.query) else {
-        println!("no searchable terms in query");
-        return Ok(());
+        return Ok("no searchable terms in query\n".to_string());
     };
 
     let mut results: Vec<Match> = Vec::new();
@@ -113,28 +119,29 @@ pub fn run(args: SearchArgs, project_override: Option<&Path>) -> Result<()> {
     });
 
     if results.is_empty() {
-        println!("no matches for {:?}", args.query);
-        return Ok(());
+        return Ok(format!("no matches for {:?}\n", args.query));
     }
 
-    match args.format {
-        Format::Json => print!("{}", render_json(&args.query, &results)?),
+    let out = match args.format {
+        Format::Json => render_json(&args.query, &results)?,
         Format::IdsOnly => {
+            let mut s = String::new();
             for m in &results {
                 match m {
-                    Match::Memory(h) => println!("{}", h.row.id),
-                    Match::Document(d) => println!("doc:{}", d.id),
-                    Match::Session(s) => println!("session:{}", s.session_id),
+                    Match::Memory(h) => s.push_str(&format!("{}\n", h.row.id)),
+                    Match::Document(d) => s.push_str(&format!("doc:{}\n", d.id)),
+                    Match::Session(s2) => s.push_str(&format!("session:{}\n", s2.session_id)),
                 }
             }
+            s
         }
         Format::Compact => {
             let blocks: Vec<String> =
                 results.iter().map(|m| render_block(m, args.with_evidence)).collect();
-            println!("{}", output::pack(blocks, args.budget));
+            format!("{}\n", output::pack(blocks, args.budget))
         }
-    }
-    Ok(())
+    };
+    Ok(out)
 }
 
 /// Memory hits, ranked hybrid (vector + FTS) when embeddings are enabled, else FTS-only.

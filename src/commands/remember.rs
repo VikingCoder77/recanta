@@ -33,6 +33,12 @@ pub struct RememberArgs {
 }
 
 pub fn run(args: RememberArgs, project_override: Option<&Path>) -> Result<()> {
+    println!("{}", render(args, project_override)?);
+    Ok(())
+}
+
+/// Write the memory and return the confirmation line (shared by the CLI and MCP bridge).
+pub fn render(args: RememberArgs, project_override: Option<&Path>) -> Result<String> {
     let title = args.title.unwrap_or_else(|| derive_title(&args.content));
     let mut new = NewMemory {
         mem_type: args.mem_type,
@@ -60,12 +66,11 @@ pub fn run(args: RememberArgs, project_override: Option<&Path>) -> Result<()> {
     };
 
     let id = memory::insert(&conn, &new)?;
-    println!(
+    Ok(format!(
         "Remembered #{id} [{}/{}]{suffix}",
         new.scope.as_str(),
         new.mem_type.as_str()
-    );
-    Ok(())
+    ))
 }
 
 /// First sentence/line of the content, trimmed to a reasonable title length.

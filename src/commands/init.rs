@@ -20,6 +20,10 @@ pub struct InitArgs {
     /// leaves the existing store and its data intact).
     #[arg(long)]
     pub force: bool,
+
+    /// Do not add this project to the cross-project workspace (the Explorer overview).
+    #[arg(long)]
+    pub no_register: bool,
 }
 
 pub fn run(args: InitArgs, project_override: Option<&Path>) -> Result<()> {
@@ -67,6 +71,9 @@ pub fn run(args: InitArgs, project_override: Option<&Path>) -> Result<()> {
     // Keep the local store out of version control (it is per-machine, local-first).
     let ignored = ensure_gitignored(&root)?;
 
+    // Register in the cross-project workspace so it shows up in the Explorer overview.
+    let registered = if args.no_register { false } else { register_workspace(&root) };
+
     println!("Initialized Recanta in {}", paths.dir.display());
     println!("  project: {} ({})", config.name, config.id);
     match &config.root_commit_sha {
@@ -77,8 +84,21 @@ pub fn run(args: InitArgs, project_override: Option<&Path>) -> Result<()> {
     if ignored {
         println!("  added .recanta/ to .gitignore");
     }
+    if registered {
+        println!("  added to workspace (shows in `recanta serve`)");
+    }
     println!("\nNext: `recanta status`, then `recanta install` to wire up hooks.");
     Ok(())
+}
+
+/// Add this project to the workspace registry. Best-effort: a registry that can't be
+/// written (e.g. no HOME) must never fail `init`, so failures are swallowed.
+fn register_workspace(root: &Path) -> bool {
+    let Ok(mut ws) = crate::workspace::Workspace::load() else { return false };
+    if ws.register(root) {
+        return ws.save().is_ok();
+    }
+    false
 }
 
 /// Ensure `.recanta/` is git-ignored (the store is local-first, never committed).

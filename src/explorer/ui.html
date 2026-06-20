@@ -22,7 +22,8 @@
   #bar{display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
   #q{flex:0 0 280px;padding:7px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:inherit}
   #q:focus{outline:none;border-color:var(--accent)}
-  #filters,#efilters{display:flex;gap:6px;flex-wrap:wrap}
+  #filters,#efilters,#pfilters{display:flex;gap:6px;flex-wrap:wrap}
+  .chip .sq{width:9px;height:9px;border-radius:2px}
   .sep{width:1px;align-self:stretch;background:var(--line);margin:0 2px}
   .chip{font-size:11px;padding:2px 9px;border:1px solid var(--line);border-radius:11px;cursor:pointer;color:var(--dim);user-select:none;display:flex;align-items:center;gap:5px}
   .chip .dot{width:9px;height:9px;border-radius:50%}
@@ -51,6 +52,8 @@
 </header>
 <div id="bar">
   <input id="q" placeholder="Search & focus nodes…" autocomplete="off">
+  <div id="pfilters"></div>
+  <span class="sep" id="psep" style="display:none"></span>
   <div id="filters"></div>
   <span class="sep"></span>
   <div id="efilters"></div>
@@ -73,6 +76,9 @@ const KIND = {
   memory:{c:'#f778ba',label:'memory'}, session:{c:'#d29922',label:'session'}, commit:{c:'#8b95a5',label:'commit'},
 };
 const EDGE = { DEFINES:'#39414f', IMPORTS:'#3d6fa3', CALLS:'#5cc8ff', CHANGED_BY:'#9e6a26', EVIDENCE:'#a13d6e', MENTIONS:'#2f6f43', RELATED:'#6a4da8' };
+// Per-project tint palette (assigned by index) for the project filter chips.
+const PROJECT_PALETTE = ['#5cc8ff','#a371f7','#3fb950','#d29922','#f778ba','#56d4c4','#ff7b72','#bc8cff','#79c0ff','#e3b341'];
+const projectColor = {};
 const el=(t,o={},k=[])=>{const n=document.createElement(t);if(o.class)n.className=o.class;if(o.text!=null)n.textContent=o.text;if(o.onClick)n.addEventListener('click',o.onClick);for(const c of k)if(c)n.appendChild(c);return n;};
 const clear=n=>{while(n.firstChild)n.removeChild(n.firstChild);};
 
@@ -80,10 +86,15 @@ let cy, hidden = new Set();
 
 async function loadStatus(){
   const m=document.getElementById('meta');
-  try{ const s=await api('/api/status'); const c=s.counts||{}; clear(m);
-    m.appendChild(el('span',{class:'k',text:s.project||''}));
-    if(s.branch)m.appendChild(el('span',{class:'pill',text:`${s.branch}@${s.head||''} ${s.dirty?'dirty':'clean'}`}));
-    m.appendChild(el('span',{text:`index ${s.index}`}));
+  try{ const s=await api('/api/status'); const c=s.counts||{}; const ps=s.projects||[]; clear(m);
+    if(s.workspace){
+      m.appendChild(el('span',{class:'k',text:`${ps.length} projects`}));
+    }else{
+      const p=ps[0]||{};
+      m.appendChild(el('span',{class:'k',text:p.project||''}));
+      if(p.branch)m.appendChild(el('span',{class:'pill',text:`${p.branch}@${p.head||''} ${p.dirty?'dirty':'clean'}`}));
+      m.appendChild(el('span',{text:`index ${p.index||'n/a'}`}));
+    }
     m.appendChild(el('span',{text:`${c.symbols} symbols · ${c.documents} docs · ${c.memory} memory · ${c.sessions} chats`}));
   }catch(e){ m.textContent='no project'; }
 }
@@ -104,6 +115,7 @@ function styleSheet(){
     {selector:'.hover',style:{'text-opacity':1,'min-zoomed-font-size':0,'font-size':9,'z-index':100,'border-width':1.5,'border-color':'#a371f7'}},
     {selector:'.faded',style:{'opacity':0.08,'text-opacity':0}},
     {selector:'.hide',style:{'display':'none'}},
+    {selector:'.hidep',style:{'display':'none'}},
   ];
 }
 
@@ -128,6 +140,7 @@ async function build(){
   cy.on('tap', evt=>{ if(evt.target===cy){ deselect(); } });
   cy.on('mouseover','node', e=>e.target.addClass('hover'));
   cy.on('mouseout','node', e=>e.target.removeClass('hover'));
+  buildProjectFilters(g.projects||[]);
   buildFilters();
   buildEdgeFilters(g.edges);
   window.__cy = cy; // debug/testing handle
@@ -141,6 +154,26 @@ function select(node){
   openDetail(node.data());
 }
 function deselect(){ cy.elements().removeClass('faded hl lbl'); document.getElementById('side').classList.remove('open'); }
+
+// Project filters: one chip per project so you can toggle each store in/out of the view.
+// Only shown when more than one project is open (single-project mode stays uncluttered).
+let hiddenProjects = new Set();
+function buildProjectFilters(projects){
+  const f=document.getElementById('pfilters'); clear(f);
+  document.getElementById('psep').style.display = projects.length>1 ? '' : 'none';
+  if(projects.length<2) return;
+  projects.forEach((p,i)=>{
+    projectColor[p.key]=PROJECT_PALETTE[i%PROJECT_PALETTE.length];
+    const sq=el('span',{class:'sq'}); sq.style.background=projectColor[p.key];
+    const chip=el('span',{class:'chip',onClick:()=>toggleProject(p.key,chip)},[sq,el('span',{text:p.name})]);
+    f.appendChild(chip);
+  });
+}
+function toggleProject(key,chip){
+  if(hiddenProjects.has(key)){ hiddenProjects.delete(key); chip.classList.remove('off'); }
+  else { hiddenProjects.add(key); chip.classList.add('off'); }
+  cy.nodes().forEach(n=> n.toggleClass('hidep', hiddenProjects.has(n.data('project'))));
+}
 
 function buildFilters(){
   const present = [...new Set(cy.nodes().map(n=>n.data('kind')))];
@@ -191,19 +224,25 @@ document.getElementById('close').addEventListener('click', deselect);
 async function openDetail(d){
   const side=document.getElementById('side'), box=document.getElementById('detail'); clear(box);
   side.classList.add('open');
+  // In multi-project mode, badge the node's project so it's clear which store it's from.
+  if(d.projectName && Object.keys(projectColor).length){
+    const dot=el('span',{class:'sq'}); dot.style.cssText='display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:middle;background:'+(projectColor[d.project]||'#888');
+    box.appendChild(el('div',{class:'sub'},[dot,el('span',{text:d.projectName})]));
+  }
   const kind=d.kind;
   if(kind==='document'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'document'})); return; }
   if(kind==='session'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'agent session'})); return; }
   if(kind==='commit'){ box.appendChild(el('h3',{text:d.label})); box.appendChild(el('div',{class:'sub',text:'commit'})); return; }
+  const pq = d.project ? '&project='+encodeURIComponent(d.project) : '';
   if(kind==='memory'){
-    const m=await api('/api/memory?id='+d.ref);
+    const m=await api('/api/memory?id='+d.ref+pq);
     box.appendChild(el('h3',{text:m.title||'memory'}));
     box.appendChild(el('div',{class:'sub',text:`${m.scope}/${m.type} · ${m.status} · ${m.created_at||''}`}));
     box.appendChild(el('pre',{text:m.content||''}));
     return;
   }
   // code symbol
-  const s=await api('/api/symbol?id='+d.ref);
+  const s=await api('/api/symbol?id='+d.ref+pq);
   box.appendChild(el('h3',{text:s.qualified_name||d.label}));
   box.appendChild(el('div',{class:'sub',text:`${s.type} · ${s.file}:${s.start}-${s.end}`}));
   if(s.signature) box.appendChild(el('pre',{text:s.signature}));

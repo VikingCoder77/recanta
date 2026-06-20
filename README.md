@@ -8,9 +8,9 @@ A fresh agent session runs one compact command and understands the current work,
 changes, decisions, risks, and the conversation history — without rereading the repo or
 loading a large tool surface. Everything stays on your machine, in a single SQLite file.
 
-> Status: **v0.1** — the core substrate is complete and usable. The human-facing graph
-> Explorer, semantic (vector) search, and an MCP bridge are on the roadmap (see
-> [Roadmap](#roadmap)).
+> Status: **v0.5** — the core substrate, the local graph **Explorer** (`recanta serve`),
+> semantic (vector) **search**, and the **MCP bridge** (`recanta mcp`) are all shipped.
+> Retention/`gc` and blast-radius code intelligence are next (see [Roadmap](#roadmap)).
 
 ---
 
@@ -86,7 +86,9 @@ recanta status               # project, branch, index/capture state, DB size
 | `import-sessions` | Import agent transcripts (Claude Code, Codex, Gemini, OpenCode) |
 | `record-commit` / `record-edit` / `record-event` | Hook targets that record activity |
 | `capture` | Manage raw-transcript capture (on by default, redacted) |
-| `serve` | Local, read-only **Explorer** web UI (search + code-graph view) |
+| `serve` | Local, read-only **Explorer** web UI (multi-project graph + search) |
+| `workspace` | Manage the cross-project overview (`list`/`add`/`remove`/`enable`/`disable`) |
+| `mcp` | **Model Context Protocol** bridge over stdio (≤5 tools, local-only) |
 | `changed` | Show changed files and the symbols they touch |
 | `status` / `migrate` | Health/identity report; apply schema migrations |
 
@@ -106,6 +108,40 @@ The default execution model is synchronous and daemonless: a hook fires `recanta
 redacts, writes to SQLite, and exits. Identity is the repo's root-commit SHA, so memory
 follows the project across clones.
 
+## Workspace (one Explorer across all your projects)
+
+Run several projects at once? `recanta init` registers each one in a global workspace
+(`~/.recanta/workspace.json`), and `recanta serve` shows **all of them in a single graph**
+with a per-project filter — while each project keeps its **own single-file store and
+identity** (the registry is just a list of paths, never a merged database).
+
+```bash
+recanta init                 # in each project — auto-registers it
+recanta workspace list       # see registered projects + on/off state
+recanta serve                # one Explorer, all projects, filter by project
+recanta serve --single       # just the current project
+recanta workspace disable    # opt out: serve shows only the current project
+```
+
+New projects (and, soon, newly-added documents) show up automatically. Each folder keeps
+its own ID; you just get one place to see everything.
+
+## MCP bridge
+
+Agents that speak the **Model Context Protocol** can reach the same local store without
+the CLI. The bridge is deliberately tiny — four `recanta_*` tools (`recanta_brief`,
+`recanta_search`, `recanta_remember`, `recanta_inspect`), well under the ≤5 cap — and it
+re-enters the exact same in-process command logic, so redaction, budgeting, and ranking
+are identical to the CLI. stdio transport, no network, no telemetry.
+
+Register it with Claude Code (or any MCP client):
+
+```bash
+claude mcp add recanta -- recanta mcp --project /path/to/repo
+```
+
+It speaks JSON-RPC 2.0 over stdio (`initialize` → `tools/list` → `tools/call`).
+
 ## Privacy & capture
 
 - **Redaction always runs** before storage (API keys, tokens, private keys, secret-named
@@ -120,10 +156,11 @@ Shipped in v0.1: the CLI core, SQLite/FTS5 store, redaction, the non-destructive
 installer (Git + Claude Code), the tree-sitter code graph, document ingestion, and
 multi-harness session import.
 
-The local **Explorer** (`recanta serve`) ships a read-only graph + search UI from the
-binary (no Node build, no CDN). Next: local **embeddings/vector** search (`sqlite-vec` +
-`fastembed`), a thin **MCP** bridge, retention/`gc`, and blast-radius code intelligence.
-See `CHANGELOG.md` for details.
+v0.3 added the local **Explorer** (`recanta serve`) — a read-only graph + search UI
+served from the binary (no Node build, no CDN). v0.4 added local **embeddings/vector**
+search (`sqlite-vec` + bundled `fastembed`, degrading to FTS-only). v0.5 adds the thin
+**MCP** bridge (`recanta mcp`). Next: retention/`gc`, an optional daemon, and
+blast-radius code intelligence. See `CHANGELOG.md` for details.
 
 ## License
 

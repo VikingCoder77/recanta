@@ -187,17 +187,23 @@ impl Config {
     }
 }
 
-/// Path to the global store `~/.recanta/recanta.db`. `user`-scope memory is kept here,
-/// separate from project memory, so preferences are durable across projects (PRD §8.8,
-/// §1). Returns an error only if the home directory cannot be determined.
-pub fn global_db_path() -> Result<PathBuf> {
+/// The global Recanta directory `~/.recanta/` — home of the `user`-scope store and the
+/// cross-project workspace registry. Returns an error only if home can't be determined.
+pub fn global_dir() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
     match home {
-        Some(h) => Ok(h.join(DIR).join(DB_FILE)),
+        Some(h) => Ok(h.join(DIR)),
         None => bail!("cannot locate home directory (set HOME) for the global store"),
     }
+}
+
+/// Path to the global store `~/.recanta/recanta.db`. `user`-scope memory is kept here,
+/// separate from project memory, so preferences are durable across projects (PRD §8.8,
+/// §1). Returns an error only if the home directory cannot be determined.
+pub fn global_db_path() -> Result<PathBuf> {
+    Ok(global_dir()?.join(DB_FILE))
 }
 
 /// Build the initial config for a freshly-initialized project root.
