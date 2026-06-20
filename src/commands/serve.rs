@@ -2,12 +2,15 @@
 //! `127.0.0.1` by default; no auth, no telemetry, no write endpoints.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::explorer::{self, ProjectStore};
 use crate::project::Paths;
+use crate::watch::{self, WatchTarget};
 use crate::workspace::Workspace;
 
 #[derive(Debug, Args)]
@@ -27,11 +30,41 @@ pub struct ServeArgs {
     /// Show only the current project, even if workspace mode is on.
     #[arg(long)]
     pub single: bool,
+
+    /// Also watch each project's document folders and live-refresh on change.
+    #[arg(long)]
+    pub watch: bool,
 }
 
 pub fn run(args: ServeArgs, project_override: Option<&Path>) -> Result<()> {
     let stores = build_stores(project_override, args.single)?;
-    explorer::run(stores, &args.host, args.port, !args.no_open)
+    let version = Arc::new(AtomicU64::new(0));
+
+    if args.watch {
+        // One watcher thread covering every served project's saved folders. It writes via
+        // its own connections (WAL), bumping `version` so the UI knows to refresh.
+        let targets: Vec<WatchTarget> = stores
+            .iter()
+            .filter(|s| !s.cfg.watch_paths.is_empty())
+            .map(|s| WatchTarget { project_root: s.root.clone(), dirs: s.cfg.watch_paths.clone() })
+            .collect();
+        if targets.is_empty() {
+            eprintln!("--watch: no document folders configured (run `recanta watch <dir>` in a project first)");
+        } else {
+            let n: usize = targets.iter().map(|t| t.dirs.len()).sum();
+            println!("Watching {n} document folder(s) for changes…");
+            let v = version.clone();
+            std::thread::spawn(move || {
+                let _ = watch::run(targets, move |_root, stats| {
+                    if stats.ingested + stats.updated > 0 {
+                        v.fetch_add(1, Ordering::SeqCst);
+                    }
+                });
+            });
+        }
+    }
+
+    explorer::run(stores, &args.host, args.port, !args.no_open, version)
 }
 
 /// Decide which stores to serve. Workspace mode (the default) opens every registered,

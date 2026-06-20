@@ -252,6 +252,24 @@ async function openDetail(d){
   box.appendChild(el('div',{class:'meta',text:'click a connected node in the graph to follow relations'}));
 }
 
+// Live refresh: when `serve --watch` re-ingests a changed document, /api/version bumps
+// and we rebuild the graph in place (no manual reload).
+let lastVersion=null;
+async function rebuild(){
+  if(cy){ cy.destroy(); cy=null; }
+  hidden=new Set(); edgeHidden=new Set(); hiddenProjects=new Set();
+  document.getElementById('loading').style.display=''; document.getElementById('loading').textContent='rebuilding…';
+  await loadStatus();
+  await build();
+}
+async function pollVersion(){
+  try{ const v=(await api('/api/version')).version;
+    if(lastVersion===null) lastVersion=v;
+    else if(v!==lastVersion){ lastVersion=v; await rebuild(); }
+  }catch(e){}
+}
+setInterval(pollVersion, 4000);
+
 loadStatus();
 build().catch(e=>{ document.getElementById('loading').textContent='failed to build graph: '+e; });
 </script>

@@ -88,6 +88,7 @@ recanta status               # project, branch, index/capture state, DB size
 | `capture` | Manage raw-transcript capture (on by default, redacted) |
 | `serve` | Local, read-only **Explorer** web UI (multi-project graph + search) |
 | `workspace` | Manage the cross-project overview (`list`/`add`/`remove`/`enable`/`disable`) |
+| `watch` | Auto-ingest new/changed documents from watched folders (incremental) |
 | `mcp` | **Model Context Protocol** bridge over stdio (≤5 tools, local-only) |
 | `changed` | Show changed files and the symbols they touch |
 | `status` / `migrate` | Health/identity report; apply schema migrations |
@@ -123,8 +124,20 @@ recanta serve --single       # just the current project
 recanta workspace disable    # opt out: serve shows only the current project
 ```
 
-New projects (and, soon, newly-added documents) show up automatically. Each folder keeps
-its own ID; you just get one place to see everything.
+New projects show up automatically. Each folder keeps its own ID; you just get one place
+to see everything.
+
+### Keeping documents fresh
+
+Point Recanta at your document folders and it ingests new/changed files automatically —
+only the differences, since ingestion is content-hash idempotent:
+
+```bash
+recanta watch ~/Documents/business   # remembers the folder; watches it
+recanta watch                         # watch all saved folders for this project
+recanta watch --once                  # one catch-up pass, then exit
+recanta serve --watch                 # Explorer + live refresh as docs change
+```
 
 ## MCP bridge
 

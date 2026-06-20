@@ -18,4 +18,5 @@ pub mod remember;
 pub mod search;
 pub mod serve;
 pub mod status;
+pub mod watch;
 pub mod workspace;

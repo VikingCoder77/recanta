@@ -109,6 +109,10 @@ pub struct Config {
     /// Embedding / semantic-search settings (PRD §12.1, v0.4). Off until `recanta embed`.
     #[serde(default)]
     pub embeddings: EmbedSettings,
+    /// Folders the document auto-updater watches (v0.5). Populated by `recanta watch <dir>`;
+    /// re-ingested incrementally on change. Empty = nothing watched.
+    #[serde(default)]
+    pub watch_paths: Vec<PathBuf>,
 }
 
 /// Semantic-search configuration, recorded after a successful `recanta embed`.
@@ -222,6 +226,7 @@ pub fn new_config(root: &Path) -> Result<Config> {
         ignore: Config::default_ignore(),
         capture: CapturePolicy::default(),
         embeddings: EmbedSettings::default(),
+        watch_paths: Vec::new(),
     })
 }
 

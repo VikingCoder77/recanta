@@ -5,7 +5,19 @@ All notable changes to Recanta are documented here. This project adheres to
 
 ## [0.5.0] - 2026-06-20
 
-A thin MCP bridge, plus a multi-project workspace overview for the Explorer.
+A thin MCP bridge, a multi-project workspace overview, and a document auto-updater.
+
+### Document auto-updater — `recanta watch`
+- **Incremental file watching:** point `recanta watch <dir>` at a folder and new/changed
+  documents are ingested automatically. Ingestion is content-hash idempotent, so only the
+  **differences** do work — unchanged files are skipped.
+- Watched folders are remembered per project (`project.json` `watch_paths`), so a later
+  bare `recanta watch` reuses them. `--once` does a single catch-up pass and exits.
+- **`recanta serve --watch`** runs the watcher alongside the Explorer (one thread covering
+  every served project's folders) and the UI **live-refreshes** when something changes
+  (via a new `/api/version` the page polls).
+- Uses `notify` for cross-platform FS events — optional-daemon territory; the synchronous
+  core never depends on it.
 
 ### Workspace — one Explorer across all your projects
 - **Per-project stores stay separate** (the single-file moat is intact); the Explorer

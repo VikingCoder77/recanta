@@ -6,6 +6,8 @@
 mod api;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -46,7 +48,16 @@ impl ProjectStore {
 }
 
 /// Start the Explorer server over one or more project stores (blocks until interrupted).
-pub fn run(stores: Vec<ProjectStore>, host: &str, port: u16, open: bool) -> Result<()> {
+/// `version` is bumped by the optional document watcher (`serve --watch`); the UI polls
+/// `/api/version` and refreshes when it changes. Pass a fresh `AtomicU64(0)` when not
+/// watching — it simply never changes.
+pub fn run(
+    stores: Vec<ProjectStore>,
+    host: &str,
+    port: u16,
+    open: bool,
+    version: Arc<AtomicU64>,
+) -> Result<()> {
     let addr = format!("{host}:{port}");
     let server = Server::http(&addr).map_err(|e| anyhow::anyhow!("binding {addr}: {e}"))?;
     let url = format!("http://{addr}");
@@ -63,7 +74,7 @@ pub fn run(stores: Vec<ProjectStore>, host: &str, port: u16, open: bool) -> Resu
     }
 
     for request in server.incoming_requests() {
-        let (body, ctype, code) = route(&stores, request.url());
+        let (body, ctype, code) = route(&stores, &version, request.url());
         let header = Header::from_bytes(b"Content-Type".as_slice(), ctype.as_bytes()).unwrap();
         let response = Response::from_string(body).with_status_code(code).with_header(header);
         let _ = request.respond(response);
@@ -81,7 +92,7 @@ fn resolve<'a>(stores: &'a [ProjectStore], url: &str) -> Option<&'a ProjectStore
 }
 
 /// Route a request to a body + content-type + status code. All read-only.
-fn route(stores: &[ProjectStore], url: &str) -> (String, &'static str, u16) {
+fn route(stores: &[ProjectStore], version: &AtomicU64, url: &str) -> (String, &'static str, u16) {
     let path = url.split('?').next().unwrap_or(url);
     let json = "application/json; charset=utf-8";
     let html = "text/html; charset=utf-8";
@@ -99,6 +110,7 @@ fn route(stores: &[ProjectStore], url: &str) -> (String, &'static str, u16) {
         "/vendor/cytoscape.min.js" => {
             return (CYTOSCAPE_JS.to_string(), "application/javascript; charset=utf-8", 200)
         }
+        "/api/version" => Ok(format!("{{\"version\":{}}}", version.load(Ordering::SeqCst))),
         "/api/status" => api::status_all(stores),
         "/api/search" => api::search_all(stores, query_param(url, "q").as_deref().unwrap_or("")),
         "/api/graph/full" => api::full_graph_all(stores),

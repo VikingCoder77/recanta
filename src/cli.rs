@@ -87,6 +87,9 @@ pub enum Command {
     /// Manage the cross-project workspace the Explorer aggregates.
     Workspace(commands::workspace::WorkspaceArgs),
 
+    /// Watch document folders and auto-ingest new/changed files (incremental).
+    Watch(commands::watch::WatchArgs),
+
     /// Apply pending SQLite schema migrations.
     Migrate(commands::migrate::MigrateArgs),
 }
@@ -121,6 +124,7 @@ impl Cli {
             Command::Serve(args) => commands::serve::run(args, project),
             Command::Mcp(args) => crate::mcp::run(args, project),
             Command::Workspace(args) => commands::workspace::run(args, project),
+            Command::Watch(args) => commands::watch::run(args, project),
             Command::Migrate(args) => commands::migrate::run(args, project),
         }
     }

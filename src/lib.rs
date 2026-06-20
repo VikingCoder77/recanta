@@ -29,6 +29,7 @@ pub mod project;
 pub mod redact;
 pub mod repo;
 pub mod sessions;
+pub mod watch;
 pub mod workspace;
 
 pub use cli::Cli;
