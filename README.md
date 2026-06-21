@@ -8,8 +8,9 @@ A fresh agent session runs one compact command and understands the current work,
 changes, decisions, risks, and the conversation history — without rereading the repo or
 loading a large tool surface. Everything stays on your machine, in a single SQLite file.
 
-> Status: **v0.5** — the core substrate, the local graph **Explorer** (`recanta serve`),
-> semantic (vector) **search**, and the **MCP bridge** (`recanta mcp`) are all shipped.
+> Status: **v0.5** — shipped: the core substrate, the local graph **Explorer**
+> (`recanta serve`), semantic (vector) **search**, the **MCP bridge** (`recanta mcp`), a
+> cross-project **workspace** overview, and a document **auto-updater** (`recanta watch`).
 > Retention/`gc` and blast-radius code intelligence are next (see [Roadmap](#roadmap)).
 
 ---
@@ -26,7 +27,10 @@ loading a large tool surface. Everything stays on your machine, in a single SQLi
   Summaries are indexes, not the truth.
 - **More than code.** Ingests your documents (Markdown, text, PDF, Word) and imports your
   past agent **sessions**, so the agent doesn't forget what you discussed ten sessions ago.
-- **Passive.** Once installed, commits and edits record themselves via Git/harness hooks.
+- **All your projects in one view.** A cross-project **workspace** shows every repo and its
+  documents in a single graph — each project keeps its own store and identity.
+- **Passive.** Once installed, commits and edits record themselves via Git/harness hooks,
+  and watched document folders re-ingest themselves as files change.
 
 ## Install
 
@@ -68,6 +72,9 @@ recanta inspect function PaperTrader.__init__
 recanta index                # build the code graph (functions/classes/imports)
 recanta ingest docs/ -r      # bring in PDFs, Word docs, Markdown as searchable memory
 recanta import-sessions      # import past Claude Code/Codex/Gemini/OpenCode chats
+recanta embed                # optional: enable semantic (vector) search via a local model
+recanta watch ~/Documents    # auto-ingest new/changed documents from a folder
+recanta serve                # open the Explorer (all your projects in one graph)
 recanta status               # project, branch, index/capture state, DB size
 ```
 
@@ -78,11 +85,12 @@ recanta status               # project, branch, index/capture state, DB size
 | `init` | Create `.recanta/`, the store, and identity; ignore the store in git |
 | `install` / `uninstall` | Non-destructive Git + Claude Code hooks (dry-run by default) |
 | `brief` | Token-budgeted fresh-session briefing |
-| `search` | Full-text search across memory, documents, and chat transcripts |
+| `search` | Hybrid search across memory, documents, and chat transcripts (FTS + vectors) |
 | `inspect` | Show a function/class/file: location, signature, recent changes |
 | `remember` | Record a durable memory (decision, task, preference, …) |
-| `index` | Build the tree-sitter code graph (Python/JS/TS) |
+| `index` | Build the tree-sitter code graph (Python/JS/TS/Rust) |
 | `ingest` | Ingest documents (Markdown/text/PDF/Word/`.doc`) |
+| `embed` | Compute embeddings for semantic search (local Ollama / LM Studio / bundled) |
 | `import-sessions` | Import agent transcripts (Claude Code, Codex, Gemini, OpenCode) |
 | `record-commit` / `record-edit` / `record-event` | Hook targets that record activity |
 | `capture` | Manage raw-transcript capture (on by default, redacted) |
@@ -99,10 +107,10 @@ Every query command takes `--budget <chars>` and `--format compact|json|ids-only
 
 ```
 Harnesses + Git hooks  →  recanta CLI (short-lived)  →  SQLite (WAL, single file)
-                                   │                       memory · code graph ·
-   redaction → parse/extract ──────┘                       documents · sessions · FTS5
+                                   │                       memory · code graph · documents ·
+   redaction → parse/extract ──────┘                       sessions · FTS5 · vectors
                                    ↓
-              read paths: brief · search · inspect
+        read paths: brief · search · inspect · MCP bridge · Explorer (serve)
 ```
 
 The default execution model is synchronous and daemonless: a hook fires `recanta`, which
@@ -172,8 +180,9 @@ multi-harness session import.
 v0.3 added the local **Explorer** (`recanta serve`) — a read-only graph + search UI
 served from the binary (no Node build, no CDN). v0.4 added local **embeddings/vector**
 search (`sqlite-vec` + bundled `fastembed`, degrading to FTS-only). v0.5 adds the thin
-**MCP** bridge (`recanta mcp`). Next: retention/`gc`, an optional daemon, and
-blast-radius code intelligence. See `CHANGELOG.md` for details.
+**MCP** bridge (`recanta mcp`), a cross-project **workspace** overview, and a document
+**auto-updater** (`recanta watch` / `serve --watch`). Next: retention/`gc`, an optional
+daemon, and blast-radius code intelligence. See `CHANGELOG.md` for details.
 
 ## License
 
