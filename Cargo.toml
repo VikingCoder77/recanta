@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.80"
 description = "CLI-first, local-first, Git-aware memory and knowledge substrate for AI agents"
 license = "Apache-2.0"
-repository = "https://github.com/nptSolutions/recanta"
+repository = "https://github.com/VikingCoder77/recanta"
 default-run = "recanta"
 
 [[bin]]

@@ -37,7 +37,7 @@ loading a large tool surface. Everything stays on your machine, in a single SQLi
 ### Download a prebuilt binary (no build required)
 
 Grab the archive for your platform from the
-[**latest release**](https://github.com/nptSolutions/recanta/releases/latest), unpack it,
+[**latest release**](https://github.com/VikingCoder77/recanta/releases/latest), unpack it,
 and put `recanta` on your `PATH`:
 
 ```bash

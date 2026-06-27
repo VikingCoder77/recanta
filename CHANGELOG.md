@@ -183,7 +183,7 @@ intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-o
 dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
 tasks are writable today via `remember --type`).
 
-[0.4.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.4.0
-[0.3.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.3.0
-[0.2.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.2.0
-[0.1.0]: https://github.com/nptSolutions/recanta/releases/tag/v0.1.0
+[0.4.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.4.0
+[0.3.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.3.0
+[0.2.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.2.0
+[0.1.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.1.0
