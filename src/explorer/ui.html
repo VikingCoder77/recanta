@@ -43,6 +43,8 @@
   #side li:hover{color:var(--accent)}
   #close{position:absolute;top:10px;right:12px;color:var(--dim);cursor:pointer;border:1px solid var(--line);border-radius:6px;padding:1px 7px}
   #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+  #plabels{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:5}
+  .plbl{position:absolute;transform:translate(-50%,-100%);font-weight:700;font-size:12px;letter-spacing:.04em;padding:2px 9px;border:1px solid var(--line);border-bottom-width:2px;border-radius:7px;background:rgba(10,13,18,.74);white-space:nowrap}
 </style>
 </head>
 <body>
@@ -61,6 +63,7 @@
 </div>
 <div id="stage">
   <div id="cy"></div>
+  <div id="plabels"></div>
   <div id="loading">building graph…</div>
   <aside id="side"><span id="close">esc</span><div id="detail"></div></aside>
 </div>
@@ -68,11 +71,13 @@
 // Detail panel content is built with DOM APIs + textContent (never innerHTML), so
 // ingested code/docs/transcripts can't inject markup. Graph labels render on canvas.
 const api = async p => (await fetch(p)).json();
+// One distinct hue per kind — previously function/method shared a blue and all five
+// type-kinds shared a purple, so the graph collapsed to ~5 colors. Spread across the wheel.
 const KIND = {
-  function:{c:'#5cc8ff',label:'function'}, method:{c:'#5cc8ff',label:'method'},
-  class:{c:'#a371f7',label:'class'}, struct:{c:'#a371f7',label:'struct'},
-  enum:{c:'#a371f7',label:'enum'}, trait:{c:'#a371f7',label:'trait'}, interface:{c:'#a371f7',label:'interface'},
-  module:{c:'#56d4c4',label:'module/file'}, document:{c:'#3fb950',label:'document'},
+  function:{c:'#3b9eff',label:'function'}, method:{c:'#7ec8ff',label:'method'},
+  class:{c:'#a371f7',label:'class'}, struct:{c:'#ff8c42',label:'struct'},
+  enum:{c:'#ffd23f',label:'enum'}, trait:{c:'#ff5247',label:'trait'}, interface:{c:'#e26bff',label:'interface'},
+  module:{c:'#2dd4bf',label:'module/file'}, document:{c:'#3fb950',label:'document'},
   memory:{c:'#f778ba',label:'memory'}, session:{c:'#d29922',label:'session'}, commit:{c:'#8b95a5',label:'commit'},
 };
 const EDGE = { DEFINES:'#39414f', IMPORTS:'#3d6fa3', CALLS:'#5cc8ff', CHANGED_BY:'#9e6a26', EVIDENCE:'#a13d6e', MENTIONS:'#2f6f43', RELATED:'#6a4da8' };
@@ -106,8 +111,11 @@ function styleSheet(){
       'width': n=>11+Math.min(n.degree(),22)*1.7, 'height': n=>11+Math.min(n.degree(),22)*1.7,
       'label':'data(label)','color':'#c8d3e0','font-size':6,'text-opacity':0,
       'min-zoomed-font-size':7,'text-wrap':'ellipsis','text-max-width':90,
-      'border-width':0.5,'border-color':'#0e1116'}},
+      // Border encodes the project, so two projects' same-kind nodes are still tellable apart.
+      'border-width':1.6,'border-color': n=>projectColor[n.data('project')]||'#0e1116'}},
     {selector:'node[kind="module"],node[kind="document"],node[kind="memory"],node[kind="commit"],node[kind="session"]',style:{'text-opacity':1,'shape':'round-rectangle'}},
+    // Type definitions get a diamond shape so they read differently from callable (ellipse) nodes.
+    {selector:'node[kind="class"],node[kind="struct"],node[kind="enum"],node[kind="trait"],node[kind="interface"]',style:{'shape':'round-diamond'}},
     {selector:'edge',style:{'width':1,'line-color':e=>EDGE[e.data('rel')]||'#39414f','curve-style':'haystack','opacity':0.55,
       'line-style':e=>(e.data('rel')==='MENTIONS'||e.data('rel')==='RELATED')?'dashed':'solid'}},
     {selector:'.hl',style:{'text-opacity':1,'border-width':2,'border-color':'#5cc8ff','z-index':99}},
@@ -121,17 +129,21 @@ function styleSheet(){
 
 async function build(){
   const g = await api('/api/graph/full');
+  const projects = g.projects||[];
+  // Assign each project a border color up front, so the node style mapper has it at init.
+  projects.forEach((p,i)=>{ projectColor[p.key]=PROJECT_PALETTE[i%PROJECT_PALETTE.length]; });
   const ids = new Set(g.nodes.map(n=>n.id));
   const elements = [];
   for(const n of g.nodes) elements.push({data:{...n}});
   let ei=0;
   for(const e of g.edges){ if(ids.has(e.source)&&ids.has(e.target)) elements.push({data:{id:'e'+(ei++),source:e.source,target:e.target,rel:e.rel}}); }
 
-  cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.06, maxZoom:2.2,
-    layout:{name:'cose',animate:false,fit:true,padding:40,nodeRepulsion:9000,idealEdgeLength:55,gravity:0.4,componentSpacing:70,nestingFactor:0.9,numIter:900}});
-  // Fit to the viewport once layout settles (and after the container has its size).
-  cy.one('layoutstop', ()=>{ cy.resize(); cy.fit(undefined, 40); });
-  setTimeout(()=>{ cy.resize(); cy.fit(undefined, 40); }, 120);
+  cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.02, maxZoom:2.2, layout:{name:'preset'}});
+
+  // Lay each project out in its own region so projects never visually intermix.
+  document.getElementById('loading').textContent='laying out…';
+  await layoutGraph(projects);
+  setTimeout(()=>{ if(cy){ cy.resize(); cy.fit(undefined, 40); } }, 120);
   window.addEventListener('resize', ()=>{ cy.resize(); cy.fit(undefined, 40); });
   document.getElementById('loading').style.display='none';
   document.getElementById('count').textContent = `${g.nodes.length} nodes · ${ei} edges`;
@@ -140,11 +152,63 @@ async function build(){
   cy.on('tap', evt=>{ if(evt.target===cy){ deselect(); } });
   cy.on('mouseover','node', e=>e.target.addClass('hover'));
   cy.on('mouseout','node', e=>e.target.removeClass('hover'));
-  buildProjectFilters(g.projects||[]);
+  buildProjectFilters(projects);
+  buildProjectLabels(projects);
   buildFilters();
   buildEdgeFilters(g.edges);
   window.__cy = cy; // debug/testing handle
+}
 
+// Run a cose layout over a collection, resolving when it settles.
+function runLayout(eles, opts){
+  return new Promise(res=>{ const l=eles.layout(opts); l.one('layoutstop',()=>res()); l.run(); });
+}
+
+// Place each project in its own column (sized to its node count) so the clusters are
+// physically separated. With a single project it's just one cose layout, as before.
+async function layoutGraph(projects){
+  const cose = {name:'cose',animate:false,fit:false,padding:30,nodeRepulsion:9000,idealEdgeLength:55,
+                gravity:0.6,componentSpacing:80,nestingFactor:0.9,numIter:700,randomize:true};
+  if(projects.length<2){
+    await runLayout(cy.elements(), cose);
+    cy.resize(); cy.fit(undefined,40); return;
+  }
+  const GAP=320; let x=0;
+  for(const p of projects){
+    const nodes = cy.nodes().filter(n=>n.data('project')===p.key);
+    if(!nodes.length) continue;
+    // Only this project's internal edges guide its layout (there are no cross-project edges).
+    const edges = nodes.connectedEdges().filter(e=>
+      e.source().data('project')===p.key && e.target().data('project')===p.key);
+    const side = Math.min(3000, Math.max(450, Math.sqrt(nodes.length)*55));
+    await runLayout(nodes.union(edges), {...cose, boundingBox:{x1:x, y1:0, w:side, h:side}});
+    x += side + GAP;
+  }
+  cy.resize(); cy.fit(undefined,40);
+}
+
+// Floating title over each project's cluster, kept in sync as you pan/zoom.
+let projLabels=[];
+function buildProjectLabels(projects){
+  const host=document.getElementById('plabels'); clear(host); projLabels=[];
+  if(projects.length<2) return;
+  for(const p of projects){
+    const d=el('div',{class:'plbl',text:p.name});
+    d.style.color=projectColor[p.key]; d.style.borderBottomColor=projectColor[p.key];
+    host.appendChild(d); projLabels.push({key:p.key, el:d});
+  }
+  cy.on('pan zoom resize', updateProjectLabels);
+  updateProjectLabels();
+}
+function updateProjectLabels(){
+  for(const pl of projLabels){
+    const ns=cy.nodes('[project="'+pl.key+'"]').filter(n=>n.visible());
+    if(!ns.length){ pl.el.style.display='none'; continue; }
+    const bb=ns.renderedBoundingBox();
+    pl.el.style.display='';
+    pl.el.style.left=((bb.x1+bb.x2)/2)+'px';
+    pl.el.style.top=(bb.y1-6)+'px';
+  }
 }
 
 function select(node){
@@ -173,6 +237,7 @@ function toggleProject(key,chip){
   if(hiddenProjects.has(key)){ hiddenProjects.delete(key); chip.classList.remove('off'); }
   else { hiddenProjects.add(key); chip.classList.add('off'); }
   cy.nodes().forEach(n=> n.toggleClass('hidep', hiddenProjects.has(n.data('project'))));
+  updateProjectLabels();
 }
 
 function buildFilters(){
@@ -189,6 +254,7 @@ function buildFilters(){
 function toggleKind(k,chip){
   if(hidden.has(k)){ hidden.delete(k); chip.classList.remove('off'); } else { hidden.add(k); chip.classList.add('off'); }
   cy.nodes().forEach(n=> n.toggleClass('hide', hidden.has(n.data('kind'))));
+  updateProjectLabels();
 }
 
 // Edge-type filters: toggle DEFINES / CALLS / IMPORTS / CHANGED_BY / MENTIONS / RELATED /
