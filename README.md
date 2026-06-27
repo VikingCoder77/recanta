@@ -167,6 +167,37 @@ claude mcp add recanta -- recanta mcp --project /path/to/repo
 
 It speaks JSON-RPC 2.0 over stdio (`initialize` → `tools/list` → `tools/call`).
 
+### Works with any MCP harness
+
+Because the bridge is plain MCP-over-stdio, **every MCP-capable harness can use Recanta** —
+no per-tool code. Most share the same `mcpServers` config shape; add this block:
+
+```json
+{
+  "mcpServers": {
+    "recanta": {
+      "command": "recanta",
+      "args": ["mcp", "--project", "/path/to/repo"]
+    }
+  }
+}
+```
+
+Where that config lives:
+
+| Harness | Config location |
+|---|---|
+| **Claude Code** | `claude mcp add …` (above) or `.mcp.json` |
+| **Google Antigravity** (IDE/CLI) | `~/.gemini/config/mcp_config.json` |
+| **Codex** | `~/.codex/config.toml` (`[mcp_servers.recanta]`) |
+| **Cursor** | `~/.cursor/mcp.json` |
+| **Windsurf** | `~/.codeium/windsurf/mcp_config.json` |
+| **OpenCode** | `opencode.json` (`mcp` block) |
+| **VS Code / Copilot** | `.vscode/mcp.json` |
+
+Recanta sits alongside other MCP servers (e.g. Miro's board server) — they don't conflict;
+a harness can talk to all of them at once.
+
 ## Privacy & capture
 
 - **Redaction always runs** before storage (API keys, tokens, private keys, secret-named
