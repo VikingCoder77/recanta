@@ -1,5 +1,9 @@
 # Recanta
 
+[![CI](https://github.com/VikingCoder77/recanta/actions/workflows/ci.yml/badge.svg)](https://github.com/VikingCoder77/recanta/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/VikingCoder77/recanta?sort=semver)](https://github.com/VikingCoder77/recanta/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **To recount, to recall.** A CLI-first, local-first memory and knowledge substrate for
 AI agents — the durable layer an agent (or a whole fleet) reads to know what happened
 before, what was decided, what you prefer, and how the work is structured.
@@ -8,7 +12,7 @@ A fresh agent session runs one compact command and understands the current work,
 changes, decisions, risks, and the conversation history — without rereading the repo or
 loading a large tool surface. Everything stays on your machine, in a single SQLite file.
 
-> Status: **v0.5** — shipped: the core substrate, the local graph **Explorer**
+> Status: **v0.5.0 — released.** Shipped: the core substrate, the local graph **Explorer**
 > (`recanta serve`), semantic (vector) **search**, the **MCP bridge** (`recanta mcp`), a
 > cross-project **workspace** overview, and a document **auto-updater** (`recanta watch`).
 > Retention/`gc` and blast-radius code intelligence are next (see [Roadmap](#roadmap)).
@@ -68,7 +72,7 @@ recanta install --apply      # wire git + Claude Code hooks; import existing ses
 
 recanta brief                # compact, budgeted briefing for a fresh session
 recanta search "why did we change the trailing stop?"
-recanta inspect function PaperTrader.__init__
+recanta inspect function MyClass.__init__
 recanta index                # build the code graph (functions/classes/imports)
 recanta ingest docs/ -r      # bring in PDFs, Word docs, Markdown as searchable memory
 recanta import-sessions      # import past Claude Code/Codex/Gemini/OpenCode chats
@@ -179,10 +183,10 @@ multi-harness session import.
 
 v0.3 added the local **Explorer** (`recanta serve`) — a read-only graph + search UI
 served from the binary (no Node build, no CDN). v0.4 added local **embeddings/vector**
-search (`sqlite-vec` + bundled `fastembed`, degrading to FTS-only). v0.5 adds the thin
-**MCP** bridge (`recanta mcp`), a cross-project **workspace** overview, and a document
-**auto-updater** (`recanta watch` / `serve --watch`). Next: retention/`gc`, an optional
-daemon, and blast-radius code intelligence. See `CHANGELOG.md` for details.
+search (`sqlite-vec` + bundled `fastembed`, degrading to FTS-only). **v0.5 (released)** adds
+the thin **MCP** bridge (`recanta mcp`), a cross-project **workspace** overview, and a
+document **auto-updater** (`recanta watch` / `serve --watch`). Next: retention/`gc`, an
+optional daemon, and blast-radius code intelligence. See `CHANGELOG.md` for details.
 
 ## License
 
