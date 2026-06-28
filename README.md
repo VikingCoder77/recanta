@@ -222,16 +222,22 @@ a harness can talk to all of them at once.
 
 ## Roadmap
 
-Shipped in v0.1: the CLI core, SQLite/FTS5 store, redaction, the non-destructive
-installer (Git + Claude Code), the tree-sitter code graph, document ingestion, and
-multi-harness session import.
+- **v0.1** ✅ — CLI core, SQLite/FTS5 store, secret redaction, non-destructive installer
+  (Git + Claude Code), tree-sitter code graph, document ingestion, multi-harness session import.
+- **v0.2** ✅ — adapters for Codex, Gemini, and OpenCode; `index --changed-only`; git
+  post-commit/checkout/merge hooks; branch-scoped memory.
+- **v0.3** ✅ — the local **Explorer** (`recanta serve`): a read-only knowledge-graph +
+  search UI served straight from the binary (no Node build, no CDN).
+- **v0.4** ✅ — local **embeddings / vector** search (`sqlite-vec` + bundled `fastembed`),
+  hybrid FTS+vector ranking, degrading to FTS-only when no model is present.
+- **v0.5** ✅ — the **MCP bridge** (`recanta mcp`), a cross-project **workspace** overview,
+  and a document **auto-updater** (`recanta watch`). **v0.5.1** adds **one-command MCP
+  registration** into any harness (Claude Code, Cursor, Antigravity, Windsurf, OpenCode,
+  Codex) — the universal-integration path.
+- **Next** ⏳ — native session import for more harnesses (Antigravity), retention/`gc`, an
+  optional daemon, and blast-radius **impact analysis** ("what breaks if I change this symbol").
 
-v0.3 added the local **Explorer** (`recanta serve`) — a read-only graph + search UI
-served from the binary (no Node build, no CDN). v0.4 added local **embeddings/vector**
-search (`sqlite-vec` + bundled `fastembed`, degrading to FTS-only). **v0.5 (released)** adds
-the thin **MCP** bridge (`recanta mcp`), a cross-project **workspace** overview, and a
-document **auto-updater** (`recanta watch` / `serve --watch`). Next: retention/`gc`, an
-optional daemon, and blast-radius code intelligence. See `CHANGELOG.md` for details.
+See `CHANGELOG.md` for details.
 
 ## License
 
