@@ -9,6 +9,7 @@ mod codex;
 mod gemini;
 mod git_hook;
 mod json_hooks;
+mod mcp_servers;
 mod opencode;
 
 use std::path::{Path, PathBuf};
@@ -57,8 +58,9 @@ impl Plan {
 
 #[derive(Debug, Args)]
 pub struct InstallArgs {
-    /// Comma-separated harnesses to install (v0.1 supports `git`, `claude-code`).
-    #[arg(long, default_value = "git,claude-code")]
+    /// Comma-separated harnesses: `git`, `claude-code`, `codex`, `gemini`, `opencode`, and
+    /// `mcp` (register the MCP bridge into every detected MCP harness). `all` = the lot.
+    #[arg(long, default_value = "git,claude-code,mcp")]
     pub harness: String,
 
     /// Apply the changes (default is a dry-run preview).
@@ -85,16 +87,24 @@ pub fn run(args: InstallArgs, project_override: Option<&Path>) -> Result<()> {
     let paths = Paths::discover(project_override)?;
     let root = &paths.root;
 
+    // `all` expands to every adapter; otherwise honor the comma-separated list.
+    let requested: Vec<&str> = if args.harness.split(',').any(|h| h.trim() == "all") {
+        vec!["git", "claude-code", "codex", "gemini", "opencode", "mcp"]
+    } else {
+        args.harness.split(',').map(str::trim).filter(|h| !h.is_empty()).collect()
+    };
+
     let mut plan = Plan::default();
-    for harness in args.harness.split(',').map(str::trim).filter(|h| !h.is_empty()) {
+    for harness in requested {
         match harness {
             "git" => plan.extend(git_hook::plan(root)),
             "claude-code" => plan.extend(claude::plan(root)?),
             "codex" => plan.extend(codex::plan(root)?),
             "gemini" => plan.extend(gemini::plan(root)?),
             "opencode" => plan.extend(opencode::plan(root)?),
+            "mcp" => plan.extend(mcp_servers::plan(root)?),
             other => plan.warnings.push(format!(
-                "unknown harness `{other}` (git, claude-code, codex, gemini, opencode)"
+                "unknown harness `{other}` (git, claude-code, codex, gemini, opencode, mcp, all)"
             )),
         }
     }
@@ -201,12 +211,20 @@ pub fn uninstall(args: UninstallArgs, project_override: Option<&Path>) -> Result
 
         let new_content = match row.harness.as_str() {
             "claude-code" | "codex" | "gemini" => json_hooks::strip(&text)?,
+            // MCP-server registrations: Codex's is a TOML managed block; the rest are JSON.
+            h if h.starts_with("mcp-") => {
+                if row.file_path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                    managed::remove_block(&text)
+                } else {
+                    mcp_servers::strip_json(&text)?
+                }
+            }
             _ => managed::remove_block(&text), // git
         };
         match new_content {
             Some(content) => {
                 if args.dry_run {
-                    println!("  [remove] managed block from {}", row.file_path.display());
+                    println!("  [remove] Recanta entry from {}", row.file_path.display());
                 } else {
                     managed::backup(&row.file_path, &paths.backups, &stamp)?;
                     std::fs::write(&row.file_path, content)
@@ -215,7 +233,7 @@ pub fn uninstall(args: UninstallArgs, project_override: Option<&Path>) -> Result
                         "UPDATE hook_installations SET status='removed' WHERE id=?1",
                         [row.id],
                     )?;
-                    println!("  ✓ removed managed block from {}", row.file_path.display());
+                    println!("  ✓ removed Recanta entry from {}", row.file_path.display());
                     removed += 1;
                 }
             }

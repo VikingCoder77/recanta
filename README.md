@@ -87,7 +87,7 @@ recanta status               # project, branch, index/capture state, DB size
 | Command | What it does |
 |---|---|
 | `init` | Create `.recanta/`, the store, and identity; ignore the store in git |
-| `install` / `uninstall` | Non-destructive Git + Claude Code hooks (dry-run by default) |
+| `install` / `uninstall` | Non-destructive Git + harness hooks **and MCP registration** across detected harnesses (dry-run by default) |
 | `brief` | Token-budgeted fresh-session briefing |
 | `search` | Hybrid search across memory, documents, and chat transcripts (FTS + vectors) |
 | `inspect` | Show a function/class/file: location, signature, recent changes |
@@ -170,7 +170,20 @@ It speaks JSON-RPC 2.0 over stdio (`initialize` → `tools/list` → `tools/call
 ### Works with any MCP harness
 
 Because the bridge is plain MCP-over-stdio, **every MCP-capable harness can use Recanta** —
-no per-tool code. Most share the same `mcpServers` config shape; add this block:
+no per-tool code.
+
+**One command registers it everywhere it finds:**
+
+```bash
+recanta install --harness mcp --apply
+```
+
+This detects the MCP harnesses on your machine (Claude Code, Cursor, Antigravity, Windsurf,
+Codex, OpenCode) and adds a `recanta` server to each — non-destructively (backs up first,
+merges alongside your other servers, exact removal on `recanta uninstall`). It's also part
+of the default `recanta install`.
+
+To wire one up by hand, most share the same `mcpServers` config shape; add this block:
 
 ```json
 {

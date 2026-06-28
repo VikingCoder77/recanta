@@ -3,6 +3,18 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Universal MCP registration
+- **`recanta install --harness mcp`** (also part of the default `recanta install`) detects
+  the MCP-capable harnesses on your machine and registers the `recanta mcp` bridge into each
+  — **Claude Code** (`.mcp.json`), **Cursor**, **Antigravity** (`~/.gemini/config/`),
+  **Windsurf**, **OpenCode**, and **Codex** (`~/.codex/config.toml`).
+- Non-destructive: backs up each config, merges a single `recanta` server alongside the
+  user's existing servers (idempotent), and `recanta uninstall` strips exactly that entry.
+  JSON configs are merged by key; Codex's TOML gets a managed block.
+- `--harness all` installs every adapter (git + harness hooks + MCP) at once.
+
 ## [0.5.0] - 2026-06-20
 
 A thin MCP bridge, a multi-project workspace overview, and a document auto-updater.
