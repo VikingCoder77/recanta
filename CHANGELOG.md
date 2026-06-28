@@ -3,7 +3,7 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.1] - 2026-06-28
 
 ### Universal MCP registration
 - **`recanta install --harness mcp`** (also part of the default `recanta install`) detects
@@ -195,6 +195,8 @@ intelligence, `post-checkout`/`post-merge` hooks, incremental `index --changed-o
 dedicated `project`/`decisions`/`task`/`user-memory` management commands (decisions and
 tasks are writable today via `remember --type`).
 
+[0.5.1]: https://github.com/VikingCoder77/recanta/releases/tag/v0.5.1
+[0.5.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.5.0
 [0.4.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.4.0
 [0.3.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.3.0
 [0.2.0]: https://github.com/VikingCoder77/recanta/releases/tag/v0.2.0

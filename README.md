@@ -12,10 +12,11 @@ A fresh agent session runs one compact command and understands the current work,
 changes, decisions, risks, and the conversation history — without rereading the repo or
 loading a large tool surface. Everything stays on your machine, in a single SQLite file.
 
-> Status: **v0.5.0 — released.** Shipped: the core substrate, the local graph **Explorer**
-> (`recanta serve`), semantic (vector) **search**, the **MCP bridge** (`recanta mcp`), a
-> cross-project **workspace** overview, and a document **auto-updater** (`recanta watch`).
-> Retention/`gc` and blast-radius code intelligence are next (see [Roadmap](#roadmap)).
+> Status: **v0.5.1 — released.** Shipped: the core substrate, the local graph **Explorer**
+> (`recanta serve`), semantic (vector) **search**, the **MCP bridge** (`recanta mcp`) with
+> **one-command registration into any MCP harness**, a cross-project **workspace** overview,
+> and a document **auto-updater** (`recanta watch`). Retention/`gc` and blast-radius code
+> intelligence are next (see [Roadmap](#roadmap)).
 
 ---
 
