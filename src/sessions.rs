@@ -8,6 +8,7 @@
 //! Harness storage layouts drift between versions — parsers are tolerant and every
 //! command accepts `--from` to point at the files directly.
 
+mod antigravity;
 mod claude;
 mod codex;
 mod gemini;
@@ -57,7 +58,7 @@ pub struct ImportStats {
 }
 
 /// The harnesses Recanta can import from.
-pub const HARNESSES: &[&str] = &["claude-code", "codex", "gemini", "opencode"];
+pub const HARNESSES: &[&str] = &["claude-code", "codex", "gemini", "opencode", "antigravity"];
 
 /// Import sessions for one harness (or `all`). `from` overrides the harness's default
 /// session location for the single-harness case.
@@ -85,6 +86,7 @@ pub fn import(
             "codex" => codex::collect(home, root, from),
             "gemini" => gemini::collect(home, root, from),
             "opencode" => opencode::collect(home, root, from),
+            "antigravity" => antigravity::collect(home, root, from),
             other => {
                 stats.notes.push(format!("unknown harness `{other}`"));
                 continue;

@@ -3,6 +3,16 @@
 All notable changes to Recanta are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Antigravity session import
+- **`recanta import-sessions --harness antigravity`** reads Google Antigravity's JSONL
+  transcripts (`~/.gemini/{antigravity-ide,antigravity,antigravity-cli}/brain/<id>/
+  .system_generated/logs/transcript.jsonl`) — mapping `USER_EXPLICIT`→user and `MODEL`→
+  assistant, capturing tool-call file paths, and skipping system/ephemeral steps.
+- A conversation is associated with a project when it references the project's root path
+  (the same approach the Codex parser uses for cwd). Antigravity is now part of `--harness all`.
+
 ## [0.5.1] - 2026-06-28
 
 ### Universal MCP registration

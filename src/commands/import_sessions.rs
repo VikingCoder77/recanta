@@ -13,7 +13,7 @@ use crate::{db, repo, sessions};
 
 #[derive(Debug, Args)]
 pub struct ImportSessionsArgs {
-    /// Harness to import from: claude-code, codex, gemini, opencode, or all.
+    /// Harness to import from: claude-code, codex, gemini, opencode, antigravity, or all.
     #[arg(long, default_value = "all")]
     pub harness: String,
 

@@ -76,7 +76,7 @@ recanta search "why did we change the trailing stop?"
 recanta inspect function MyClass.__init__
 recanta index                # build the code graph (functions/classes/imports)
 recanta ingest docs/ -r      # bring in PDFs, Word docs, Markdown as searchable memory
-recanta import-sessions      # import past Claude Code/Codex/Gemini/OpenCode chats
+recanta import-sessions      # import past Claude Code/Codex/Gemini/OpenCode/Antigravity chats
 recanta embed                # optional: enable semantic (vector) search via a local model
 recanta watch ~/Documents    # auto-ingest new/changed documents from a folder
 recanta serve                # open the Explorer (all your projects in one graph)
@@ -96,7 +96,7 @@ recanta status               # project, branch, index/capture state, DB size
 | `index` | Build the tree-sitter code graph (Python/JS/TS/Rust) |
 | `ingest` | Ingest documents (Markdown/text/PDF/Word/`.doc`) |
 | `embed` | Compute embeddings for semantic search (local Ollama / LM Studio / bundled) |
-| `import-sessions` | Import agent transcripts (Claude Code, Codex, Gemini, OpenCode) |
+| `import-sessions` | Import agent transcripts (Claude Code, Codex, Gemini, OpenCode, Antigravity) |
 | `record-commit` / `record-edit` / `record-event` | Hook targets that record activity |
 | `capture` | Manage raw-transcript capture (on by default, redacted) |
 | `serve` | Local, read-only **Explorer** web UI (multi-project graph + search) |
@@ -234,8 +234,8 @@ a harness can talk to all of them at once.
   and a document **auto-updater** (`recanta watch`). **v0.5.1** adds **one-command MCP
   registration** into any harness (Claude Code, Cursor, Antigravity, Windsurf, OpenCode,
   Codex) — the universal-integration path.
-- **Next** ⏳ — native session import for more harnesses (Antigravity), retention/`gc`, an
-  optional daemon, and blast-radius **impact analysis** ("what breaks if I change this symbol").
+- **Next** ⏳ — incremental Explorer updates (no full graph rebuild on refresh), retention/`gc`,
+  an optional daemon, and blast-radius **impact analysis** ("what breaks if I change this symbol").
 
 See `CHANGELOG.md` for details.
 
