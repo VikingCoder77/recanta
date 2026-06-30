@@ -71,6 +71,7 @@
 // Detail panel content is built with DOM APIs + textContent (never innerHTML), so
 // ingested code/docs/transcripts can't inject markup. Graph labels render on canvas.
 const api = async p => (await fetch(p)).json();
+const edgeId = e => 'e:'+e.source+'>'+e.target+'>'+e.rel;
 // One distinct hue per kind — previously function/method shared a blue and all five
 // type-kinds shared a purple, so the graph collapsed to ~5 colors. Spread across the wheel.
 const KIND = {
@@ -135,8 +136,14 @@ async function build(){
   const ids = new Set(g.nodes.map(n=>n.id));
   const elements = [];
   for(const n of g.nodes) elements.push({data:{...n}});
-  let ei=0;
-  for(const e of g.edges){ if(ids.has(e.source)&&ids.has(e.target)) elements.push({data:{id:'e'+(ei++),source:e.source,target:e.target,rel:e.rel}}); }
+  // Deterministic edge ids (source>target>rel) so incremental refresh can diff them.
+  const seenE = new Set();
+  for(const e of g.edges){
+    if(!(ids.has(e.source)&&ids.has(e.target))) continue;
+    const id=edgeId(e); if(seenE.has(id)) continue; seenE.add(id);
+    elements.push({data:{id,source:e.source,target:e.target,rel:e.rel}});
+  }
+  const ei = seenE.size;
 
   cy = cytoscape({container:document.getElementById('cy'), elements, style:styleSheet(), minZoom:0.02, maxZoom:2.2, layout:{name:'preset'}});
 
@@ -318,9 +325,82 @@ async function openDetail(d){
   box.appendChild(el('div',{class:'meta',text:'click a connected node in the graph to follow relations'}));
 }
 
-// Live refresh: when `serve --watch` re-ingests a changed document, /api/version bumps
-// and we rebuild the graph in place (no manual reload).
+// Live refresh: when `serve --watch` re-ingests a changed document, /api/version bumps.
+// Instead of rebuilding the whole graph (destroy + full force-layout over thousands of
+// nodes — the laggy part), we diff the new graph against what's on screen and patch in only
+// the changes, leaving every existing node where it is. New nodes are dropped next to their
+// neighbors, so a refresh is effectively instant.
 let lastVersion=null;
+
+async function applyDelta(){
+  if(!cy){ return rebuild(); }
+  const g = await api('/api/graph/full');
+  const projects = g.projects||[];
+  projects.forEach((p,i)=>{ if(!projectColor[p.key]) projectColor[p.key]=PROJECT_PALETTE[i%PROJECT_PALETTE.length]; });
+
+  const wantNodes = new Map(g.nodes.map(n=>[n.id, n]));
+  const validEdges = g.edges.filter(e=>wantNodes.has(e.source)&&wantNodes.has(e.target));
+  const wantEdges = new Set(validEdges.map(edgeId));
+
+  // 1. remove anything that's gone (cytoscape also drops edges of removed nodes).
+  cy.batch(()=>{
+    cy.nodes().forEach(n=>{ if(!wantNodes.has(n.id())) n.remove(); });
+    cy.edges().forEach(e=>{ if(!wantEdges.has(e.id())) e.remove(); });
+  });
+
+  // 2. add anything new.
+  const haveNodes = new Set(cy.nodes().map(n=>n.id()));
+  const haveEdges = new Set(cy.edges().map(e=>e.id()));
+  const newNodes = g.nodes.filter(n=>!haveNodes.has(n.id));
+  cy.batch(()=>{
+    cy.add(newNodes.map(n=>({group:'nodes', data:{...n}})));
+    const seen=new Set();
+    cy.add(validEdges.filter(e=>{ const id=edgeId(e); if(haveEdges.has(id)||seen.has(id)) return false; seen.add(id); return true; })
+      .map(e=>({group:'edges', data:{id:edgeId(e), source:e.source, target:e.target, rel:e.rel}})));
+  });
+
+  // 3. place the new nodes near their neighbors — no global layout.
+  positionNewNodes(newNodes);
+
+  // 4. keep the chrome in sync (counts, filters, labels) and re-apply active filters.
+  document.getElementById('count').textContent = `${g.nodes.length} nodes · ${validEdges.length} edges`;
+  buildProjectFilters(projects);
+  buildProjectLabels(projects);
+  cy.nodes().forEach(n=>{ n.toggleClass('hide', hidden.has(n.data('kind'))); n.toggleClass('hidep', hiddenProjects.has(n.data('project'))); });
+  cy.edges().forEach(e=> e.toggleClass('hide', edgeHidden.has(e.data('rel'))));
+  loadStatus();
+}
+
+// Drop each new node next to its already-placed neighbors (a new doc links to the code it
+// mentions), or at its project's centre. A brand-new project gets its own column on the right.
+function positionNewNodes(newNodes){
+  if(!newNodes.length) return;
+  const byProj={};
+  for(const n of newNodes){ (byProj[n.project]=byProj[n.project]||[]).push(n.id); }
+  let rightEdge = cy.elements().boundingBox().x2 + 320;
+  for(const key in byProj){
+    const newIds = new Set(byProj[key]);
+    const existing = cy.nodes('[project="'+key+'"]').filter(n=>!newIds.has(n.id()));
+    if(existing.length){
+      const bb = existing.boundingBox(); const cx=(bb.x1+bb.x2)/2, cyy=(bb.y1+bb.y2)/2;
+      for(const id of byProj[key]){
+        const node=cy.getElementById(id);
+        const nbrs=node.neighborhood('node').filter(m=>!newIds.has(m.id()));
+        const p = nbrs.length ? (()=>{const b=nbrs.boundingBox(); return {x:(b.x1+b.x2)/2,y:(b.y1+b.y2)/2};})() : {x:cx,y:cyy};
+        node.position({x:p.x+(Math.random()-0.5)*70, y:p.y+(Math.random()-0.5)*70});
+      }
+    } else {
+      // brand-new project: lay just its nodes out in a fresh column to the right.
+      const col = cy.collection(byProj[key].map(id=>cy.getElementById(id)));
+      const side = Math.min(2200, Math.max(320, Math.sqrt(col.length)*55));
+      col.layout({name:'cose', animate:false, fit:false, boundingBox:{x1:rightEdge, y1:0, w:side, h:side}, randomize:true, numIter:500}).run();
+      rightEdge += side + 320;
+    }
+  }
+  updateProjectLabels();
+}
+
+// Full rebuild — fallback only (e.g. the graph was never built).
 async function rebuild(){
   if(cy){ cy.destroy(); cy=null; }
   hidden=new Set(); edgeHidden=new Set(); hiddenProjects=new Set();
@@ -331,7 +411,7 @@ async function rebuild(){
 async function pollVersion(){
   try{ const v=(await api('/api/version')).version;
     if(lastVersion===null) lastVersion=v;
-    else if(v!==lastVersion){ lastVersion=v; await rebuild(); }
+    else if(v!==lastVersion){ lastVersion=v; await applyDelta(); }
   }catch(e){}
 }
 setInterval(pollVersion, 4000);
